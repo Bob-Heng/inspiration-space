@@ -1,0 +1,340 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { api } from '../api'
+import { STATUS_LABELS, summarize } from '../vocab'
+
+/**
+ * 灵感录入与队列组件。可复用：嵌入首页与后续审议工作台，不设独立灵感页。
+ * 含 docx 导入（TASK-018）：上传 → AI 拆解预览 → 勾选/编辑 → 确认入库。
+ */
+export default function InspirationPanel() {
+  const navigate = useNavigate()
+  const [items, setItems] = useState([])
+  const [content, setContent] = useState('')
+  const [sourceDate, setSourceDate] = useState('')
+  const [keyword, setKeyword] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [error, setError] = useState(null)
+  const [editingId, setEditingId] = useState(null)
+  const [editingContent, setEditingContent] = useState('')
+  const fileInputRef = useRef(null)
+  const [importing, setImporting] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  // 预览项：{ content, source_date, selected }
+  const [preview, setPreview] = useState(null)
+
+  const load = useCallback(async () => {
+    try {
+      const data = await api.listInspirations({
+        status: statusFilter || undefined,
+        keyword: keyword || undefined,
+      })
+      setItems(data)
+      setError(null)
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [statusFilter, keyword])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  async function handleCreate(e) {
+    e.preventDefault()
+    if (!content.trim()) return
+    try {
+      await api.createInspiration({
+        content: content.trim(),
+        source_date: sourceDate || null,
+      })
+      setContent('')
+      setSourceDate('')
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleFileChosen(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setImporting(true)
+    setError(null)
+    try {
+      const data = await api.importDocxPreview(file)
+      setPreview({
+        filename: data.filename,
+        items: data.items.map((item) => ({
+          content: item.content,
+          source_date: item.source_date ?? '',
+          selected: true,
+        })),
+      })
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  function updatePreviewItem(index, patch) {
+    setPreview((prev) => ({
+      ...prev,
+      items: prev.items.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    }))
+  }
+
+  async function handleConfirmImport() {
+    const chosen = preview.items
+      .filter((item) => item.selected && item.content.trim())
+      .map((item) => ({
+        content: item.content.trim(),
+        source_date: item.source_date || null,
+      }))
+    if (chosen.length === 0) return
+    setConfirming(true)
+    setError(null)
+    try {
+      await api.confirmImport(chosen)
+      setPreview(null)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setConfirming(false)
+    }
+  }
+
+  async function handleSaveEdit(id) {
+    if (!editingContent.trim()) return
+    try {
+      await api.updateInspiration(id, { content: editingContent.trim() })
+      setEditingId(null)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function handleDelete(id) {
+    if (!window.confirm(`确认删除灵感 #${id}？`)) return
+    try {
+      await api.deleteInspiration(id)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const selectedCount = preview?.items.filter((item) => item.selected).length ?? 0
+
+  return (
+    <div className="space-y-6">
+      <form onSubmit={handleCreate} className="rounded-lg bg-white p-4 shadow">
+        <textarea
+          className="w-full rounded border border-slate-300 p-3 outline-none focus:border-slate-500"
+          rows={3}
+          placeholder="记下一条灵感…"
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+        />
+        <div className="mt-2 flex items-center gap-3">
+          <label className="text-sm text-slate-500">
+            来源日期（可空）
+            <input
+              type="date"
+              className="ml-2 rounded border border-slate-300 px-2 py-1"
+              value={sourceDate}
+              onChange={(e) => setSourceDate(e.target.value)}
+            />
+          </label>
+          <button
+            type="submit"
+            className="ml-auto rounded bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700"
+          >
+            录入待审队列
+          </button>
+          <button
+            type="button"
+            disabled={importing}
+            className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {importing ? 'AI 拆解中…' : '导入 docx'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".docx"
+            className="hidden"
+            onChange={handleFileChosen}
+          />
+        </div>
+      </form>
+
+      {preview && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 shadow">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-slate-800">
+              导入预览：{preview.filename}（拆解出 {preview.items.length} 条，勾选 {selectedCount} 条）
+            </h2>
+            <div className="ml-auto flex gap-2">
+              <button
+                disabled={confirming || selectedCount === 0}
+                className="rounded bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+                onClick={handleConfirmImport}
+              >
+                {confirming ? '入库中…' : `确认入库（${selectedCount} 条）`}
+              </button>
+              <button
+                disabled={confirming}
+                className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-white"
+                onClick={() => setPreview(null)}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            AI 只切割不改写；识别不到日期的条目日期留空。入库前可勾选、编辑正文与日期。
+          </p>
+          <ul className="mt-3 space-y-2">
+            {preview.items.map((item, index) => (
+              <li
+                key={index}
+                className={`rounded border p-3 ${
+                  item.selected ? 'border-slate-300 bg-white' : 'border-slate-200 bg-slate-50 opacity-60'
+                }`}
+              >
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={item.selected}
+                    onChange={(e) => updatePreviewItem(index, { selected: e.target.checked })}
+                  />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <textarea
+                      className="w-full rounded border border-slate-200 p-2 text-sm outline-none focus:border-slate-500"
+                      rows={Math.min(6, Math.max(2, item.content.split('\n').length + 1))}
+                      value={item.content}
+                      onChange={(e) => updatePreviewItem(index, { content: e.target.value })}
+                    />
+                    <label className="block text-xs text-slate-500">
+                      来源日期
+                      <input
+                        type="date"
+                        className="ml-2 rounded border border-slate-300 px-2 py-0.5"
+                        value={item.source_date}
+                        onChange={(e) => updatePreviewItem(index, { source_date: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <input
+          className="w-64 rounded border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-slate-500"
+          placeholder="关键词搜索"
+          value={keyword}
+          onChange={(e) => setKeyword(e.target.value)}
+        />
+        <select
+          className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+        >
+          <option value="">全部状态</option>
+          <option value="pending">待审议</option>
+          <option value="in_review">审议中</option>
+          <option value="reviewed">已审议</option>
+          <option value="rejected">已否定</option>
+        </select>
+        <span className="text-sm text-slate-500">共 {items.length} 条</span>
+      </div>
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
+      <ul className="space-y-2">
+        {items.map((item) => (
+          <li key={item.id} className="rounded-lg bg-white p-4 shadow">
+            {editingId === item.id ? (
+              <div>
+                <textarea
+                  className="w-full rounded border border-slate-300 p-2 outline-none focus:border-slate-500"
+                  rows={3}
+                  value={editingContent}
+                  onChange={(e) => setEditingContent(e.target.value)}
+                />
+                <div className="mt-2 flex gap-2">
+                  <button
+                    className="rounded bg-slate-800 px-3 py-1 text-sm text-white"
+                    onClick={() => handleSaveEdit(item.id)}
+                  >
+                    保存
+                  </button>
+                  <button
+                    className="rounded border border-slate-300 px-3 py-1 text-sm"
+                    onClick={() => setEditingId(null)}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-3">
+                <span className="shrink-0 font-mono text-sm text-slate-400">
+                  #{item.id}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-slate-800">{summarize(item.content)}</p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {item.source_date ?? '无来源日期'} ·{' '}
+                    {STATUS_LABELS[item.status] ?? item.status}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  {(item.status === 'pending' || item.status === 'in_review') && (
+                    <button
+                      className="text-sm text-slate-800 hover:underline"
+                      onClick={() => navigate(`/review?inspiration=${item.id}`)}
+                    >
+                      开始审议
+                    </button>
+                  )}
+                  <button
+                    className="text-sm text-slate-500 hover:text-slate-800"
+                    onClick={() => {
+                      setEditingId(item.id)
+                      setEditingContent(item.content)
+                    }}
+                  >
+                    编辑
+                  </button>
+                  <button
+                    className="text-sm text-red-500 hover:text-red-700"
+                    onClick={() => handleDelete(item.id)}
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+            )}
+          </li>
+        ))}
+        {items.length === 0 && (
+          <li className="rounded-lg bg-white p-6 text-center text-sm text-slate-400 shadow">
+            队列为空
+          </li>
+        )}
+      </ul>
+    </div>
+  )
+}
