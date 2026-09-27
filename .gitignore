@@ -1,0 +1,32 @@
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# SQLite 数据文件
+*.db
+*.db-journal
+*.db.bak-*
+*.tzfix.done
+*.sqlite
+*.sqlite3
+
+# 环境变量与密钥
+.env
+.env.local
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 打包产物
+backend/build/
+backend/dist/
+backend/*.spec
+installer/Output/
