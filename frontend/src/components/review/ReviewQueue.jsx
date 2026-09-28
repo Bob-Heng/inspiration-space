@@ -1,10 +1,13 @@
-import { STATUS_LABELS, summarize } from '../../vocab'
+import { useLang } from '../../i18n'
+import { statusLabel } from '../../vocab'
+import TranslatedText from '../TranslatedText'
 
 export default function ReviewQueue({ items, selectedId, onSelect, error }) {
+  const { t, tf, lang } = useLang()
   return (
     <div className="rounded-lg bg-white p-4 shadow">
-      <h2 className="text-sm font-bold text-slate-800">待审队列</h2>
-      <p className="mt-1 text-xs text-slate-400">共 {items.length} 条</p>
+      <h2 className="text-sm font-bold text-slate-800">{t('queue')}</h2>
+      <p className="mt-1 text-xs text-slate-400">{tf('totalItems', { n: items.length })}</p>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <ul className="mt-3 space-y-2">
         {items.map((item) => (
@@ -20,15 +23,22 @@ export default function ReviewQueue({ items, selectedId, onSelect, error }) {
               <div className="flex items-center gap-2">
                 <span className="font-mono text-xs text-slate-400">#{item.id}</span>
                 <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">
-                  {STATUS_LABELS[item.status] ?? item.status}
+                  {statusLabel(item.status, lang)}
                 </span>
               </div>
-              <p className="mt-1 text-slate-800">{summarize(item.content, 60)}</p>
+              <p className="mt-1 text-slate-800">
+                <TranslatedText
+                  contentZh={item.content_zh ?? item.content}
+                  contentEn={item.content_en ?? item.content}
+                  originalLang={item.original_lang}
+                  clamp
+                />
+              </p>
             </button>
           </li>
         ))}
         {items.length === 0 && (
-          <li className="py-6 text-center text-xs text-slate-400">队列为空</li>
+          <li className="py-6 text-center text-xs text-slate-400">{t('queueEmpty')}</li>
         )}
       </ul>
     </div>

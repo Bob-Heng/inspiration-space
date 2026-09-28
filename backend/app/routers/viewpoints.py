@@ -4,6 +4,7 @@ import json
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth import require_user
@@ -21,7 +22,13 @@ from ..domain.viewpoints import (
     query_viewpoints,
     split_viewpoint,
 )
-from ..models import Viewpoint, ViewpointEvent
+from ..models import (
+    ReviewDecision,
+    ReviewMessage,
+    ReviewSession,
+    Viewpoint,
+    ViewpointEvent,
+)
 from ..schemas import (
     ClassifiedOut,
     LayerCode,
@@ -121,6 +128,66 @@ def get_classified(db: Session = Depends(get_db)) -> dict[str, list[Viewpoint]]:
 @router.get("/{viewpoint_id}", response_model=ViewpointOut)
 def get_viewpoint(viewpoint_id: int, db: Session = Depends(get_db)) -> Viewpoint:
     return _get_or_404(viewpoint_id, db)
+
+
+@router.get("/{viewpoint_id}/review-history")
+def get_review_history(viewpoint_id: int, db: Session = Depends(get_db)) -> dict:
+    """观点的审议历史（只读）：会话 + 讨论消息 + 决策 + 当时的 AI 分析。"""
+    _get_or_404(viewpoint_id, db)
+    session = db.scalar(
+        select(ReviewSession)
+        .where(ReviewSession.viewpoint_id == viewpoint_id)
+        .order_by(ReviewSession.id.desc())
+    )
+    if session is None:
+        return {"exists": False}
+    messages = list(
+        db.scalars(
+            select(ReviewMessage)
+            .where(ReviewMessage.session_id == session.id)
+            .order_by(ReviewMessage.id)
+        )
+    )
+    decision = db.scalar(
+        select(ReviewDecision)
+        .where(ReviewDecision.session_id == session.id)
+        .order_by(ReviewDecision.id.desc())
+    )
+    return {
+        "exists": True,
+        "session": {
+            "id": session.id,
+            "status": session.status,
+            "started_at": session.started_at,
+            "ended_at": session.ended_at,
+        },
+        "messages": [
+            {
+                "id": m.id,
+                "role": m.role,
+                "content": m.content,
+                "content_zh": m.content_zh,
+                "content_en": m.content_en,
+                "original_lang": m.original_lang,
+                "created_at": m.created_at,
+            }
+            for m in messages
+        ],
+        "decision": (
+            {
+                "decision_type": decision.decision_type,
+                "final_content": decision.final_content,
+                "reason": decision.reason,
+                "created_at": decision.created_at,
+            }
+            if decision
+            else None
+        ),
+        "analysis": json.loads(session.analysis_json) if session.analysis_json else None,
+        "analysis_en": (
+            json.loads(session.analysis_json_en) if session.analysis_json_en else None
+        ),
+    }
 
 
 @router.get("/{viewpoint_id}/relations", response_model=list[RelationOut])

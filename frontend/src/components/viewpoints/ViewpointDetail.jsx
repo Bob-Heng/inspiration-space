@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api'
+import TranslatedText from '../TranslatedText'
+import { useLang } from '../../i18n'
 import {
-  EVENT_TYPE_LABELS,
-  LAYER_LABELS,
   RELATION_LABELS,
-  VIEWPOINT_STATUS_LABELS,
+  eventLabel,
   formatDateTime,
+  layerLabel,
+  relationLabel,
+  statusLabel,
   summarize,
   tagLine,
 } from '../../vocab'
@@ -16,22 +19,28 @@ function autoMergeContent(survivor, absorbed) {
   return `${survivor}\n${absorbed}`
 }
 
-function relationDetail(detail) {
+function relationDetail(detail, tf, lang) {
   if (!detail) return null
-  if (detail.conflict_with) return `与 #${detail.conflict_with} 冲突`
-  if (detail.merged_into) return `并入 #${detail.merged_into}`
-  if (detail.absorbed_id) return `吸收 #${detail.absorbed_id}`
-  if (detail.split_from) return `拆自 #${detail.split_from}`
+  if (detail.conflict_with) return tf('relConflictWith', { id: detail.conflict_with })
+  if (detail.merged_into) return tf('relMergedInto', { id: detail.merged_into })
+  if (detail.absorbed_id) return tf('relAbsorbed', { id: detail.absorbed_id })
+  if (detail.split_from) return tf('relSplitFrom', { id: detail.split_from })
   if (detail.new_viewpoint_ids)
-    return `拆出 ${detail.new_viewpoint_ids.map((id) => `#${id}`).join('、')}`
+    return tf('relSplitInto', {
+      ids: detail.new_viewpoint_ids
+        .map((id) => `#${id}`)
+        .join(lang === 'en' ? ', ' : '、'),
+    })
   return null
 }
 
 export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
+  const { t, tf, lang } = useLang()
   const [viewpoint, setViewpoint] = useState(null)
   const [inspiration, setInspiration] = useState(null)
   const [relations, setRelations] = useState([])
   const [history, setHistory] = useState([])
+  const [review, setReview] = useState(null)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
   const [relationForm, setRelationForm] = useState({ targetId: '', type: 'similar' })
@@ -41,14 +50,16 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
 
   const load = useCallback(async () => {
     try {
-      const [detail, relationList, eventList] = await Promise.all([
+      const [detail, relationList, eventList, reviewHistory] = await Promise.all([
         api.getViewpoint(viewpointId),
         api.listViewpointRelations(viewpointId),
         api.getViewpointHistory(viewpointId),
+        api.getReviewHistory(viewpointId),
       ])
       setViewpoint(detail)
       setRelations(relationList)
       setHistory(eventList)
+      setReview(reviewHistory?.exists ? reviewHistory : null)
       setError(null)
       if (detail.source_inspiration_id) {
         try {
@@ -85,9 +96,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
     if (!targetId) return
     if (
       relationForm.type === 'conflict' &&
-      !window.confirm(
-        `建立冲突关系后，#${viewpointId} 与 #${targetId} 双方都将转为已悬置（解除冲突不会自动恢复，需手动操作状态）。确认建立？`,
-      )
+      !window.confirm(tf('confirmConflict', { a: viewpointId, b: targetId }))
     ) {
       return
     }
@@ -97,54 +106,51 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
           to_viewpoint_id: targetId,
           relation_type: relationForm.type,
         }),
-      relationForm.type === 'conflict' ? '已建立冲突关系，双方转为已悬置' : '已建立关系',
+      relationForm.type === 'conflict'
+        ? t('noticeConflictCreated')
+        : t('noticeRelationCreated'),
     )
     setRelationForm({ targetId: '', type: 'similar' })
   }
 
   function handleDeleteRelation(relation) {
     const extra =
-      relation.relation_type === 'conflict'
-        ? '解除冲突不会自动恢复双方的悬置状态，需手动操作。'
-        : ''
-    if (!window.confirm(`确认解除与 #${relation.viewpoint.id} 的关系？${extra}`)) return
+      relation.relation_type === 'conflict' ? t('confirmUnlinkConflictExtra') : ''
+    if (!window.confirm(tf('confirmUnlink', { id: relation.viewpoint.id, extra })))
+      return
     run(
       () => api.deleteViewpointRelation(viewpointId, relation.id),
-      '已解除关系',
+      t('noticeRelationRemoved'),
     )
   }
 
   function handleSuspend() {
-    if (
-      !window.confirm(
-        '悬置后该观点在分类视图中带悬置标记，待证据充分后再恢复。确认悬置？',
-      )
+    if (!window.confirm(t('confirmSuspend'))) return
+    run(
+      () => api.updateViewpointStatus(viewpointId, { to_status: 'suspended' }),
+      statusLabel('suspended', lang),
     )
-      return
-    run(() => api.updateViewpointStatus(viewpointId, { to_status: 'suspended' }), '已悬置')
   }
 
   function handleRestore() {
-    if (!window.confirm('恢复后该观点回到已采纳状态。确认恢复？')) return
-    run(() => api.updateViewpointStatus(viewpointId, { to_status: 'accepted' }), '已恢复采纳')
+    if (!window.confirm(t('confirmRestore'))) return
+    run(
+      () => api.updateViewpointStatus(viewpointId, { to_status: 'accepted' }),
+      t('noticeRestored'),
+    )
   }
 
   function handleReject(e) {
     e.preventDefault()
     if (!rejectForm.reason.trim()) return
-    if (
-      !window.confirm(
-        '否定是终态，不可恢复；观点将保留留档但不再进入分类视图。确认否定？',
-      )
-    )
-      return
+    if (!window.confirm(t('confirmRejectVp'))) return
     run(
       () =>
         api.updateViewpointStatus(viewpointId, {
           to_status: 'rejected',
           reason: rejectForm.reason.trim(),
         }),
-      '已否定',
+      statusLabel('rejected', lang),
     )
     setRejectForm({ open: false, reason: '' })
   }
@@ -168,11 +174,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
     e.preventDefault()
     const targetId = Number(mergeForm.targetId)
     if (!targetId || !mergeForm.reason.trim()) return
-    if (
-      !window.confirm(
-        `将把 #${targetId} 合并进 #${viewpointId}：正文接续保留，#${targetId} 转为已否定并留档可追溯。确认合并？`,
-      )
-    )
+    if (!window.confirm(tf('confirmMerge', { target: targetId, id: viewpointId })))
       return
     run(
       () =>
@@ -181,7 +183,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
           merged_content: mergeForm.content.trim() || null,
           reason: mergeForm.reason.trim(),
         }),
-      `已合并，#${targetId} 转为已否定`,
+      tf('noticeMerged', { id: targetId }),
     )
     setMergeForm({ targetId: '', reason: '', content: '' })
   }
@@ -195,9 +197,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
     e.preventDefault()
     if (splitParts.length < 2 || !splitForm.reason.trim()) return
     if (
-      !window.confirm(
-        `将拆分为 ${splitParts.length} 条新观点（继承分层/标签/来源），#${viewpointId} 转为已否定并留档可追溯。确认拆分？`,
-      )
+      !window.confirm(tf('confirmSplit', { n: splitParts.length, id: viewpointId }))
     )
       return
     run(
@@ -206,7 +206,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
           parts: splitParts,
           reason: splitForm.reason.trim(),
         }),
-      `已拆分为 ${splitParts.length} 条新观点`,
+      tf('noticeSplit', { n: splitParts.length }),
     )
     setSplitForm({ text: '', reason: '' })
   }
@@ -221,10 +221,10 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
           {viewpoint && (
             <>
               <span className="text-sm text-slate-500">
-                {LAYER_LABELS[viewpoint.layer] ?? '未分层'}
+                {layerLabel(viewpoint.layer, lang) ?? t('unlayered')}
               </span>
               <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
-                {VIEWPOINT_STATUS_LABELS[viewpoint.status] ?? viewpoint.status}
+                {statusLabel(viewpoint.status, lang)}
               </span>
             </>
           )}
@@ -232,7 +232,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
             className="ml-auto text-sm text-slate-500 hover:text-slate-800"
             onClick={onClose}
           >
-            关闭
+            {t('close')}
           </button>
         </div>
 
@@ -247,41 +247,52 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
           </p>
         )}
         {!viewpoint ? (
-          <p className="mt-6 text-sm text-slate-400">加载中…</p>
+          <p className="mt-6 text-sm text-slate-400">{t('loading')}</p>
         ) : (
           <>
             <p className="mt-4 whitespace-pre-wrap text-slate-800">
-              {viewpoint.content}
+              <TranslatedText
+                contentZh={viewpoint.content_zh ?? viewpoint.content}
+                contentEn={viewpoint.content_en ?? viewpoint.content}
+                originalLang={viewpoint.original_lang}
+                className="whitespace-pre-wrap"
+              />
             </p>
             <p className="mt-2 text-xs text-slate-500">
-              标签：{tagLine(viewpoint) || '无'} · 来源日期：
-              {viewpoint.source_date ?? '—'} · 入库：
-              {formatDateTime(viewpoint.created_at)} · 更新：
-              {formatDateTime(viewpoint.updated_at)}
+              {tf('tagsLine', { v: tagLine(viewpoint, lang) || t('none') })} ·{' '}
+              {tf('sourceDate', { date: viewpoint.source_date ?? '—' })} ·{' '}
+              {tf('createdLine', { v: formatDateTime(viewpoint.created_at, lang) })} ·{' '}
+              {tf('updatedLine', { v: formatDateTime(viewpoint.updated_at, lang) })}
             </p>
 
             <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">来源灵感</h3>
+              <h3 className="text-sm font-bold text-slate-800">{t('vpSourceInspiration')}</h3>
               {inspiration ? (
                 <div className="mt-2 rounded border border-slate-200 p-3 text-sm">
                   <span className="font-mono text-xs text-slate-400">
                     #{inspiration.id}
                   </span>
                   <p className="mt-1 whitespace-pre-wrap text-slate-600">
-                    {inspiration.content}
+                    <TranslatedText
+                      contentZh={inspiration.content_zh ?? inspiration.content}
+                      contentEn={inspiration.content_en ?? inspiration.content}
+                      originalLang={inspiration.original_lang}
+                    />
                   </p>
                 </div>
               ) : (
                 <p className="mt-2 text-sm text-slate-400">
-                  {viewpoint.source_inspiration_id ? '来源灵感加载失败' : '无来源灵感'}
+                  {viewpoint.source_inspiration_id
+                    ? t('vpSourceLoadFailed')
+                    : t('vpNoSource')}
                 </p>
               )}
             </section>
 
             <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">相近 / 冲突 / 相关关系</h3>
+              <h3 className="text-sm font-bold text-slate-800">{t('vpRelations')}</h3>
               {relations.length === 0 ? (
-                <p className="mt-2 text-sm text-slate-400">暂无关系。</p>
+                <p className="mt-2 text-sm text-slate-400">{t('vpNoRelations')}</p>
               ) : (
                 <ul className="mt-2 space-y-2">
                   {relations.map((relation) => (
@@ -296,8 +307,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                             : 'bg-slate-200 text-slate-600'
                         }`}
                       >
-                        {RELATION_LABELS[relation.relation_type] ??
-                          relation.relation_type}
+                        {relationLabel(relation.relation_type, lang)}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="font-mono text-xs text-slate-400">
@@ -307,8 +317,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                           {summarize(relation.viewpoint.content, 50)}
                         </span>
                         <span className="ml-2 text-xs text-slate-500">
-                          {VIEWPOINT_STATUS_LABELS[relation.viewpoint.status] ??
-                            relation.viewpoint.status}
+                          {statusLabel(relation.viewpoint.status, lang)}
                         </span>
                       </span>
                       {editable && (
@@ -316,7 +325,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                           className="shrink-0 text-xs text-red-500 hover:text-red-700"
                           onClick={() => handleDeleteRelation(relation)}
                         >
-                          解除
+                          {t('vpUnlink')}
                         </button>
                       )}
                     </li>
@@ -327,7 +336,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                 <form onSubmit={handleCreateRelation} className="mt-3 flex items-center gap-2 text-sm">
                   <input
                     className="w-28 rounded border border-slate-300 px-2 py-1.5"
-                    placeholder="对方编号"
+                    placeholder={t('vpTargetId')}
                     value={relationForm.targetId}
                     onChange={(e) =>
                       setRelationForm((f) => ({ ...f, targetId: e.target.value }))
@@ -340,9 +349,9 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                       setRelationForm((f) => ({ ...f, type: e.target.value }))
                     }
                   >
-                    {Object.entries(RELATION_LABELS).map(([value, label]) => (
+                    {Object.keys(RELATION_LABELS).map((value) => (
                       <option key={value} value={value}>
-                        {label}
+                        {relationLabel(value, lang)}
                       </option>
                     ))}
                   </select>
@@ -350,17 +359,17 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                     type="submit"
                     className="rounded bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700"
                   >
-                    建立关系
+                    {t('vpAddRelation')}
                   </button>
                 </form>
               )}
             </section>
 
             <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">状态操作</h3>
+              <h3 className="text-sm font-bold text-slate-800">{t('vpStatusOps')}</h3>
               {!editable ? (
                 <p className="mt-2 text-sm text-slate-400">
-                  已否定为终态，不可再变更状态。
+                  {t('vpRejectedFinal')}
                 </p>
               ) : (
                 <div className="mt-2 flex items-center gap-2 text-sm">
@@ -369,7 +378,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                       className="rounded border border-amber-300 px-3 py-1.5 text-amber-700 hover:bg-amber-50"
                       onClick={handleSuspend}
                     >
-                      悬置
+                      {t('vpSuspend')}
                     </button>
                   )}
                   {viewpoint.status === 'suspended' && (
@@ -377,14 +386,14 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                       className="rounded border border-green-300 px-3 py-1.5 text-green-700 hover:bg-green-50"
                       onClick={handleRestore}
                     >
-                      恢复采纳
+                      {t('vpRestore')}
                     </button>
                   )}
                   <button
                     className="rounded border border-red-300 px-3 py-1.5 text-red-600 hover:bg-red-50"
                     onClick={() => setRejectForm((f) => ({ ...f, open: !f.open }))}
                   >
-                    否定
+                    {t('reject')}
                   </button>
                 </div>
               )}
@@ -393,7 +402,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                   <textarea
                     className="w-full rounded border border-slate-300 p-2 text-sm outline-none focus:border-slate-500"
                     rows={2}
-                    placeholder="否定理由（必填）"
+                    placeholder={t('vpRejectReasonPlaceholder')}
                     value={rejectForm.reason}
                     onChange={(e) =>
                       setRejectForm((f) => ({ ...f, reason: e.target.value }))
@@ -403,7 +412,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                     type="submit"
                     className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-500"
                   >
-                    确认否定
+                    {t('confirmReject')}
                   </button>
                 </form>
               )}
@@ -411,12 +420,12 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
 
             {editable && (
               <section className="mt-6 border-t border-slate-100 pt-4">
-                <h3 className="text-sm font-bold text-slate-800">合并</h3>
+                <h3 className="text-sm font-bold text-slate-800">{t('vpMerge')}</h3>
                 <form onSubmit={handleMerge} className="mt-2 space-y-2 text-sm">
                   <div className="flex items-center gap-2">
                     <input
                       className="w-28 rounded border border-slate-300 px-2 py-1.5"
-                      placeholder="被合并方编号"
+                      placeholder={t('vpMergeTarget')}
                       value={mergeForm.targetId}
                       onChange={(e) =>
                         setMergeForm((f) => ({ ...f, targetId: e.target.value }))
@@ -424,7 +433,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                     />
                     <input
                       className="flex-1 rounded border border-slate-300 px-2 py-1.5"
-                      placeholder="合并原因（必填）"
+                      placeholder={t('vpMergeReason')}
                       value={mergeForm.reason}
                       onChange={(e) =>
                         setMergeForm((f) => ({ ...f, reason: e.target.value }))
@@ -435,13 +444,13 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                       className="rounded border border-slate-300 px-3 py-1.5 text-slate-600 hover:text-slate-800"
                       onClick={handlePrefillMerge}
                     >
-                      预填接续正文
+                      {t('vpMergePrefill')}
                     </button>
                   </div>
                   <textarea
                     className="w-full rounded border border-slate-300 p-2 outline-none focus:border-slate-500"
                     rows={4}
-                    placeholder="合并后的正文（留空则自动无损接续双方正文，可预填后微调）"
+                    placeholder={t('vpMergeContentPlaceholder')}
                     value={mergeForm.content}
                     onChange={(e) =>
                       setMergeForm((f) => ({ ...f, content: e.target.value }))
@@ -451,7 +460,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                     type="submit"
                     className="rounded bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700"
                   >
-                    确认合并
+                    {t('vpMergeConfirm')}
                   </button>
                 </form>
               </section>
@@ -459,12 +468,12 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
 
             {editable && (
               <section className="mt-6 border-t border-slate-100 pt-4">
-                <h3 className="text-sm font-bold text-slate-800">拆分</h3>
+                <h3 className="text-sm font-bold text-slate-800">{t('vpSplit')}</h3>
                 <form onSubmit={handleSplit} className="mt-2 space-y-2 text-sm">
                   <textarea
                     className="w-full rounded border border-slate-300 p-2 outline-none focus:border-slate-500"
                     rows={5}
-                    placeholder="每条新观点正文之间用空行分隔（至少 2 条）"
+                    placeholder={t('vpSplitPlaceholder')}
                     value={splitForm.text}
                     onChange={(e) =>
                       setSplitForm((f) => ({ ...f, text: e.target.value }))
@@ -473,21 +482,21 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                   <div className="flex items-center gap-2">
                     <input
                       className="flex-1 rounded border border-slate-300 px-2 py-1.5"
-                      placeholder="拆分原因（必填）"
+                      placeholder={t('vpSplitReason')}
                       value={splitForm.reason}
                       onChange={(e) =>
                         setSplitForm((f) => ({ ...f, reason: e.target.value }))
                       }
                     />
                     <span className="text-xs text-slate-500">
-                      将拆出 {splitParts.length} 条
+                      {tf('vpSplitCount', { n: splitParts.length })}
                     </span>
                     <button
                       type="submit"
                       className="rounded bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700 disabled:opacity-40"
                       disabled={splitParts.length < 2}
                     >
-                      确认拆分
+                      {t('vpSplitConfirm')}
                     </button>
                   </div>
                 </form>
@@ -495,33 +504,95 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
             )}
 
             <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">操作留痕</h3>
+              <h3 className="text-sm font-bold text-slate-800">{t('vpReviewHistory')}</h3>
+              {!review ? (
+                <p className="mt-2 text-sm text-slate-400">
+                  {t('vpNoReview')}
+                </p>
+              ) : (
+                <div className="mt-2 space-y-3">
+                  {review.decision && (
+                    <p className="rounded bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                      {t('decisionPrefix')}
+                      {t('decisionTypes')[review.decision.decision_type] ??
+                        review.decision.decision_type}
+                      {review.decision.reason
+                        ? ` · ${t('vpReasonPrefix')}${review.decision.reason}`
+                        : ''}
+                    </p>
+                  )}
+                  {review.messages.length === 0 ? (
+                    <p className="text-sm text-slate-400">{t('vpReviewNoMessages')}</p>
+                  ) : (
+                    <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {review.messages.map((msg) => (
+                        <li
+                          key={msg.id}
+                          className={`flex ${
+                            msg.role === 'user' ? 'justify-end' : 'justify-start'
+                          }`}
+                        >
+                          <div
+                            className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                              msg.role === 'user'
+                                ? 'bg-slate-800 text-white'
+                                : 'bg-slate-100 text-slate-800'
+                            }`}
+                          >
+                            <p
+                              className={`mb-0.5 text-xs ${
+                                msg.role === 'user'
+                                  ? 'text-slate-300'
+                                  : 'text-slate-400'
+                              }`}
+                            >
+                              {msg.role === 'user' ? t('me') : t('ai')}
+                            </p>
+                            <p className="whitespace-pre-wrap">
+                              <TranslatedText
+                                contentZh={msg.content_zh ?? msg.content}
+                                contentEn={msg.content_en ?? msg.content}
+                                originalLang={msg.original_lang}
+                              />
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="mt-6 border-t border-slate-100 pt-4">
+              <h3 className="text-sm font-bold text-slate-800">{t('vpHistory')}</h3>
               {history.length === 0 ? (
-                <p className="mt-2 text-sm text-slate-400">暂无写操作记录。</p>
+                <p className="mt-2 text-sm text-slate-400">{t('vpNoHistory')}</p>
               ) : (
                 <ul className="mt-2 space-y-1 text-sm">
                   {history.map((event) => (
                     <li key={event.id} className="text-slate-600">
                       <span className="text-xs text-slate-400">
-                        {formatDateTime(event.created_at)}
+                        {formatDateTime(event.created_at, lang)}
                       </span>
                       <span className="ml-2">
-                        {EVENT_TYPE_LABELS[event.event_type] ?? event.event_type}
+                        {eventLabel(event.event_type, lang)}
                       </span>
                       {(event.from_status || event.to_status) && (
                         <span className="ml-2 text-xs text-slate-500">
-                          {VIEWPOINT_STATUS_LABELS[event.from_status] ?? '—'} →{' '}
-                          {VIEWPOINT_STATUS_LABELS[event.to_status] ?? '—'}
+                          {statusLabel(event.from_status, lang) ?? '—'} →{' '}
+                          {statusLabel(event.to_status, lang) ?? '—'}
                         </span>
                       )}
-                      {relationDetail(event.detail) && (
+                      {relationDetail(event.detail, tf, lang) && (
                         <span className="ml-2 text-xs text-slate-500">
-                          {relationDetail(event.detail)}
+                          {relationDetail(event.detail, tf, lang)}
                         </span>
                       )}
                       {event.reason && (
                         <span className="ml-2 text-xs text-slate-500">
-                          原因：{event.reason}
+                          {t('reasonPrefix')}
+                          {event.reason}
                         </span>
                       )}
                     </li>

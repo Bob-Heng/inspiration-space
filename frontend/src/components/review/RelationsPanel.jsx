@@ -1,24 +1,25 @@
+import { useLang } from '../../i18n'
+import TranslatedText from '../TranslatedText'
 import {
-  LAYER_LABELS,
-  RELATION_LABELS,
-  VIEWPOINT_STATUS_LABELS,
-  summarize,
+  layerLabel,
+  relationLabel,
+  statusLabel,
+  tagLabel,
 } from '../../vocab'
 import LlmSettingsCard from './LlmSettingsCard'
 
 export default function RelationsPanel({ analysis, related }) {
+  const { t, tf, lang } = useLang()
   const tags = analysis?.tags ?? {}
 
   return (
     <div className="space-y-4">
       <div className="rounded-lg bg-white p-4 shadow">
-        <h2 className="text-sm font-bold text-slate-800">关联观点</h2>
+        <h2 className="text-sm font-bold text-slate-800">{t('relatedViewpoints')}</h2>
         {!analysis ? (
-          <p className="mt-2 text-sm text-slate-400">
-            生成 AI 分析后，这里将展示相近 / 冲突观点。
-          </p>
+          <p className="mt-2 text-sm text-slate-400">{t('relatedHintEmpty')}</p>
         ) : related.length === 0 ? (
-          <p className="mt-2 text-sm text-slate-400">暂无关联观点。</p>
+          <p className="mt-2 text-sm text-slate-400">{t('noRelated')}</p>
         ) : (
           <ul className="mt-3 space-y-2">
             {related.map(({ relation, viewpoint }) => (
@@ -34,7 +35,7 @@ export default function RelationsPanel({ analysis, related }) {
                         : 'bg-slate-200 text-slate-600'
                     }`}
                   >
-                    {RELATION_LABELS[relation.type] ?? relation.type}
+                    {relationLabel(relation.type, lang)}
                   </span>
                   <span className="font-mono text-xs text-slate-400">
                     #{relation.viewpoint_id}
@@ -43,15 +44,22 @@ export default function RelationsPanel({ analysis, related }) {
                 {viewpoint ? (
                   <>
                     <p className="mt-1 text-slate-800">
-                      {summarize(viewpoint.content, 50)}
+                      <TranslatedText
+                        contentZh={viewpoint.content_zh ?? viewpoint.content}
+                        contentEn={viewpoint.content_en ?? viewpoint.content}
+                        originalLang={viewpoint.original_lang}
+                        clamp
+                      />
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      分层：{LAYER_LABELS[viewpoint.layer] ?? '无'} · 状态：
-                      {VIEWPOINT_STATUS_LABELS[viewpoint.status] ?? viewpoint.status}
+                      {tf('layerLabel', {
+                        v: layerLabel(viewpoint.layer, lang) ?? t('none'),
+                      })}{' '}
+                      · {tf('statusLabel', { v: statusLabel(viewpoint.status, lang) })}
                     </p>
                   </>
                 ) : (
-                  <p className="mt-1 text-xs text-red-500">观点加载失败</p>
+                  <p className="mt-1 text-xs text-red-500">{t('viewpointLoadFailed')}</p>
                 )}
               </li>
             ))}
@@ -60,18 +68,36 @@ export default function RelationsPanel({ analysis, related }) {
       </div>
 
       <div className="rounded-lg bg-white p-4 shadow">
-        <h2 className="text-sm font-bold text-slate-800">标签建议</h2>
+        <h2 className="text-sm font-bold text-slate-800">{t('tagSuggestion')}</h2>
         {!analysis ? (
-          <p className="mt-2 text-sm text-slate-400">
-            生成 AI 分析后，这里将展示分层与标签建议。
-          </p>
+          <p className="mt-2 text-sm text-slate-400">{t('tagSuggestionHint')}</p>
         ) : (
           <ul className="mt-2 space-y-1 text-sm text-slate-800">
-            <li>分层：{analysis.layer ?? '无'}</li>
-            <li>领域：{tags.domain ?? '无'}</li>
-            <li>圈层：{tags.circle ?? '无'}</li>
-            <li>学科：{tags.discipline ?? '无'}</li>
-            <li>场景：{tags.scene ?? '无'}</li>
+            <li>
+              {tf('layerLabel', {
+                v: analysis.layer ? tagLabel(analysis.layer, lang) : t('none'),
+              })}
+            </li>
+            <li>
+              {tf('domainLine', {
+                v: tags.domain ? tagLabel(tags.domain, lang) : t('none'),
+              })}
+            </li>
+            <li>
+              {tf('circleLine', {
+                v: tags.circle ? tagLabel(tags.circle, lang) : t('none'),
+              })}
+            </li>
+            <li>
+              {tf('disciplineLine', {
+                v: tags.discipline ? tagLabel(tags.discipline, lang) : t('none'),
+              })}
+            </li>
+            <li>
+              {tf('sceneLine', {
+                v: tags.scene ? tagLabel(tags.scene, lang) : t('none'),
+              })}
+            </li>
           </ul>
         )}
       </div>

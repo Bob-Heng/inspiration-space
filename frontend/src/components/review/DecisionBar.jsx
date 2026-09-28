@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react'
+import { useLang } from '../../i18n'
 import {
   CIRCLE_OPTIONS,
   DISCIPLINE_OPTIONS,
   DOMAIN_OPTIONS,
   LAYER_OPTIONS,
-  RELATION_LABELS,
   SCENE_OPTIONS,
+  relationLabel,
   summarize,
+  tagLabel,
 } from '../../vocab'
 
 function TagSelect({ label, options, value, onChange }) {
+  const { t, lang } = useLang()
   return (
     <label className="block text-xs text-slate-500">
       {label}
@@ -18,10 +21,10 @@ function TagSelect({ label, options, value, onChange }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
-        <option value="">（留空）</option>
+        <option value="">{t('emptyOption')}</option>
         {options.map((o) => (
           <option key={o} value={o}>
-            {o}
+            {tagLabel(o, lang)}
           </option>
         ))}
       </select>
@@ -30,6 +33,7 @@ function TagSelect({ label, options, value, onChange }) {
 }
 
 export default function DecisionBar({ session, analysis, related, onSubmit }) {
+  const { t, tf, lang } = useLang()
   const [mode, setMode] = useState(null) // null | 'reject' | 'accept'
   const [reason, setReason] = useState('')
   const [finalContent, setFinalContent] = useState('')
@@ -70,14 +74,14 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
   async function submit(decisionType) {
     setError(null)
     if (decisionType === 'reject' && !reason.trim()) {
-      setError('请填写否定理由')
+      setError(t('rejectReasonRequired'))
       return
     }
     if (
       (decisionType === 'accept' || decisionType === 'accept_modified') &&
       !finalContent.trim()
     ) {
-      setError('最终正文不能为空')
+      setError(t('finalContentRequired'))
       return
     }
     const payload = { decision_type: decisionType }
@@ -109,7 +113,7 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
   }
 
   function handleDefer() {
-    if (!window.confirm('确认暂缓审议该灵感？它将回到待审队列。')) return
+    if (!window.confirm(t('deferConfirm'))) return
     submit('defer')
   }
 
@@ -118,11 +122,11 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
       {mode === 'reject' && (
         <div className="fixed inset-x-0 bottom-16 z-10 flex justify-center px-4">
           <div className="w-full max-w-xl rounded-lg border border-slate-200 bg-white p-4 shadow-lg">
-            <h3 className="text-sm font-bold text-slate-800">否定该灵感</h3>
+            <h3 className="text-sm font-bold text-slate-800">{t('rejectTitle')}</h3>
             <textarea
               className="mt-2 w-full rounded border border-slate-300 p-2 text-sm outline-none focus:border-slate-500"
               rows={3}
-              placeholder="请填写否定理由（必填）"
+              placeholder={t('rejectReasonPlaceholder')}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />
@@ -133,14 +137,14 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
                 onClick={() => setMode(null)}
                 disabled={submitting}
               >
-                取消
+                {t('cancel')}
               </button>
               <button
                 className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-500 disabled:opacity-50"
                 onClick={() => submit('reject')}
                 disabled={submitting}
               >
-                {submitting ? '提交中…' : '确认否定'}
+                {submitting ? t('submitting') : t('confirmReject')}
               </button>
             </div>
           </div>
@@ -151,10 +155,10 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
         <div className="fixed bottom-16 right-4 z-10 w-[min(42rem,92vw)]">
           <div className="max-h-[70vh] overflow-y-auto rounded-lg border border-slate-200 bg-white p-4 shadow-lg">
             <h3 className="text-sm font-bold text-slate-800">
-              {mode === 'accept' ? '采纳为观点' : '修改后采纳'}
+              {mode === 'accept' ? t('acceptTitle') : t('acceptModifiedTitle')}
             </h3>
             <label className="mt-3 block text-xs text-slate-500">
-              最终正文
+              {t('finalContent')}
               <textarea
                 className="mt-1 w-full rounded border border-slate-300 p-2 text-sm text-slate-800 outline-none focus:border-slate-500"
                 rows={5}
@@ -164,31 +168,31 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
             </label>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-5">
               <TagSelect
-                label="分层"
+                label={t('layer')}
                 options={LAYER_OPTIONS}
                 value={layer}
                 onChange={setLayer}
               />
               <TagSelect
-                label="领域"
+                label={t('domain')}
                 options={DOMAIN_OPTIONS}
                 value={tags.domain}
                 onChange={(v) => setTags((t) => ({ ...t, domain: v }))}
               />
               <TagSelect
-                label="圈层"
+                label={t('circle')}
                 options={CIRCLE_OPTIONS}
                 value={tags.circle}
                 onChange={(v) => setTags((t) => ({ ...t, circle: v }))}
               />
               <TagSelect
-                label="学科"
+                label={t('discipline')}
                 options={DISCIPLINE_OPTIONS}
                 value={tags.discipline}
                 onChange={(v) => setTags((t) => ({ ...t, discipline: v }))}
               />
               <TagSelect
-                label="场景"
+                label={t('scene')}
                 options={SCENE_OPTIONS}
                 value={tags.scene}
                 onChange={(v) => setTags((t) => ({ ...t, scene: v }))}
@@ -197,7 +201,7 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
 
             {(analysis?.relations ?? []).length > 0 && (
               <div className="mt-3">
-                <p className="text-xs text-slate-500">关联关系（勾选后随观点入库）</p>
+                <p className="text-xs text-slate-500">{t('relationsToSave')}</p>
                 <ul className="mt-1 space-y-1">
                   {analysis.relations.map((rel) => {
                     const vp = related.find(
@@ -218,7 +222,7 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
                                 : 'bg-slate-200 text-slate-600'
                             }`}
                           >
-                            {RELATION_LABELS[rel.type] ?? rel.type}
+                            {relationLabel(rel.type, lang)}
                           </span>
                           <span className="min-w-0 truncate">
                             #{rel.viewpoint_id}{' '}
@@ -239,7 +243,7 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
                 onClick={() => setMode(null)}
                 disabled={submitting}
               >
-                取消
+                {t('cancel')}
               </button>
               <button
                 className="rounded bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
@@ -247,10 +251,10 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
                 disabled={submitting}
               >
                 {submitting
-                  ? '提交中…'
+                  ? t('submitting')
                   : mode === 'accept'
-                    ? '确认采纳'
-                    : '确认修改后采纳'}
+                    ? t('confirmAccept')
+                    : t('confirmAcceptModified')}
               </button>
             </div>
           </div>
@@ -260,7 +264,9 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
       <div className="fixed inset-x-0 bottom-0 z-10 border-t border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
           <span className="text-sm text-slate-500">
-            {session ? `正在审议灵感 #${session.inspiration_id}` : '未选择灵感'}
+            {session
+              ? tf('reviewingN', { id: session.inspiration_id })
+              : t('noInspirationSelected')}
           </span>
           <div className="ml-auto flex gap-2">
             <button
@@ -268,21 +274,21 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
               onClick={() => setMode(mode === 'reject' ? null : 'reject')}
               disabled={disabled}
             >
-              否定
+              {t('reject')}
             </button>
             <button
               className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               onClick={handleDefer}
               disabled={disabled}
             >
-              暂缓
+              {t('defer')}
             </button>
             <button
               className="rounded bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
               onClick={() => setMode(mode === 'accept' ? null : 'accept')}
               disabled={disabled}
             >
-              采纳
+              {t('accept')}
             </button>
             <button
               className="rounded bg-slate-600 px-4 py-2 text-sm text-white hover:bg-slate-500 disabled:opacity-50"
@@ -291,7 +297,7 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
               }
               disabled={disabled}
             >
-              修改后采纳
+              {t('acceptModified')}
             </button>
           </div>
         </div>

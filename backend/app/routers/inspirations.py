@@ -1,6 +1,6 @@
 """灵感 CRUD：录入即入队（status=pending），id 即编号；docx 导入（TASK-018）。"""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from ..ai import (
 )
 from ..auth import require_user
 from ..db import get_db
+from ..domain.translation import make_bilingual
 from ..domain.docx_import import (
     DocxImportError,
     default_year_from_filename,
@@ -56,12 +57,17 @@ def list_inspirations(
 
 
 @router.post("", response_model=InspirationOut, status_code=status.HTTP_201_CREATED)
-def create_inspiration(payload: InspirationCreate, db: Session = Depends(get_db)) -> Inspiration:
+async def create_inspiration(
+    payload: InspirationCreate,
+    db: Session = Depends(get_db),
+) -> Inspiration:
+    bilingual = await make_bilingual(db, payload.content)
     inspiration = Inspiration(
         content=payload.content,
         source_date=payload.source_date,
         source_type=payload.source_type,
         status="pending",
+        **bilingual,
     )
     db.add(inspiration)
     db.commit()
@@ -157,19 +163,22 @@ async def import_docx_preview(
     response_model=list[InspirationOut],
     status_code=status.HTTP_201_CREATED,
 )
-def confirm_import(
+async def confirm_import(
     payload: ImportConfirmRequest, db: Session = Depends(get_db)
 ) -> list[Inspiration]:
     """用户确认预览后批量入库：source_type=docx_import，status=pending，单事务。"""
-    inspirations = [
-        Inspiration(
-            content=item.content,
-            source_date=item.source_date,
-            source_type="docx_import",
-            status="pending",
+    inspirations = []
+    for item in payload.items:
+        bilingual = await make_bilingual(db, item.content)
+        inspirations.append(
+            Inspiration(
+                content=item.content,
+                source_date=item.source_date,
+                source_type="docx_import",
+                status="pending",
+                **bilingual,
+            )
         )
-        for item in payload.items
-    ]
     db.add_all(inspirations)
     db.commit()
     for inspiration in inspirations:

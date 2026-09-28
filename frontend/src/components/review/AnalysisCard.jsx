@@ -1,4 +1,5 @@
-import { RELATION_LABELS } from '../../vocab'
+import { useLang } from '../../i18n'
+import { relationLabel, tagLabel } from '../../vocab'
 
 function Section({ title, children }) {
   return (
@@ -10,48 +11,63 @@ function Section({ title, children }) {
 }
 
 export default function AnalysisCard({ analysis, loading, onAnalyze }) {
+  const { t, tf, lang } = useLang()
   const tags = analysis?.tags ?? {}
 
   return (
     <div className="rounded-lg bg-white p-4 shadow">
       <div className="flex items-center">
-        <h2 className="text-sm font-bold text-slate-800">AI 分析</h2>
+        <h2 className="text-sm font-bold text-slate-800">{t('aiAnalysis')}</h2>
         <button
           className="ml-auto rounded bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
           onClick={onAnalyze}
           disabled={loading}
         >
-          {loading ? '生成中…' : analysis ? '重新生成' : '生成分析'}
+          {loading ? t('generating') : analysis ? t('regenerate') : t('generate')}
         </button>
       </div>
 
-      {loading && <p className="mt-3 text-sm text-slate-400">正在分析，请稍候…</p>}
+      {loading && <p className="mt-3 text-sm text-slate-400">{t('analyzing')}</p>}
       {!analysis && !loading && (
-        <p className="mt-3 text-sm text-slate-400">
-          点击「生成分析」，AI 将给出采纳理由、反对理由、分层与标签建议。
-        </p>
+        <p className="mt-3 text-sm text-slate-400">{t('analysisHint')}</p>
       )}
 
       {analysis && (
         <div className="mt-3 space-y-4">
-          <Section title="采纳理由">
+          <Section title={t('adoptionReason')}>
             <p className="whitespace-pre-wrap">{analysis.adoption_reason}</p>
           </Section>
-          <Section title="最强反对理由">
+          <Section title={t('strongestCounter')}>
             <p className="whitespace-pre-wrap">{analysis.strongest_counterargument}</p>
           </Section>
-          <Section title="分层建议">
-            <p>{analysis.layer ?? '无'}</p>
+          <Section title={t('layerSuggestion')}>
+            <p>{analysis.layer ? tagLabel(analysis.layer, lang) : t('none')}</p>
           </Section>
-          <Section title="标签建议">
+          <Section title={t('tagSuggestion')}>
             <ul className="grid grid-cols-2 gap-x-4 gap-y-1">
-              <li>领域：{tags.domain ?? '无'}</li>
-              <li>圈层：{tags.circle ?? '无'}</li>
-              <li>学科：{tags.discipline ?? '无'}</li>
-              <li>场景：{tags.scene ?? '无'}</li>
+              <li>
+                {tf('domainLine', {
+                  v: tags.domain ? tagLabel(tags.domain, lang) : t('none'),
+                })}
+              </li>
+              <li>
+                {tf('circleLine', {
+                  v: tags.circle ? tagLabel(tags.circle, lang) : t('none'),
+                })}
+              </li>
+              <li>
+                {tf('disciplineLine', {
+                  v: tags.discipline ? tagLabel(tags.discipline, lang) : t('none'),
+                })}
+              </li>
+              <li>
+                {tf('sceneLine', {
+                  v: tags.scene ? tagLabel(tags.scene, lang) : t('none'),
+                })}
+              </li>
             </ul>
           </Section>
-          <Section title="相近 / 冲突关系">
+          <Section title={t('relationSuggestion')}>
             {analysis.relations?.length ? (
               <ul className="space-y-1">
                 {analysis.relations.map((rel) => (
@@ -63,17 +79,17 @@ export default function AnalysisCard({ analysis, loading, onAnalyze }) {
                           : 'bg-slate-200 text-slate-600'
                       }`}
                     >
-                      {RELATION_LABELS[rel.type] ?? rel.type}
+                      {relationLabel(rel.type, lang)}
                     </span>
-                    观点 #{rel.viewpoint_id}
+                    {tf('viewpointN', { id: rel.viewpoint_id })}
                   </li>
                 ))}
               </ul>
             ) : (
-              <p>无</p>
+              <p>{t('none')}</p>
             )}
           </Section>
-          <Section title="AI 第一轮疑问">
+          <Section title={t('firstQuestions')}>
             {analysis.questions?.length ? (
               <ol className="list-decimal space-y-1 pl-5">
                 {analysis.questions.map((q, i) => (
@@ -81,7 +97,7 @@ export default function AnalysisCard({ analysis, loading, onAnalyze }) {
                 ))}
               </ol>
             ) : (
-              <p>无</p>
+              <p>{t('none')}</p>
             )}
           </Section>
         </div>

@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
+import { useLang } from '../../i18n'
 
 /**
  * AI 服务设置卡片：选择服务商 → 填 API Key → 测试连接拉取可用模型 → 下拉选择模型 → 保存。
  * 界面配置保存后立即生效，优先于环境变量；密钥只回显末 4 位。
  */
 export default function LlmSettingsCard() {
+  const { t, tf } = useLang()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [presets, setPresets] = useState([])
@@ -52,7 +54,7 @@ export default function LlmSettingsCard() {
     if (key !== 'custom') setBaseUrl('')
     setApiKey('')
     invalidateModels()
-    setMessage({ ok: false, text: '切换服务商后需重新填写 API Key 并测试连接' })
+    setMessage({ ok: false, text: t('switchProviderNote') })
   }
 
   async function handleSave() {
@@ -71,7 +73,7 @@ export default function LlmSettingsCard() {
         data.saved?.has_api_key ? data.saved.api_key_masked : null,
       )
       setApiKey('')
-      setMessage({ ok: true, text: '已保存，立即生效' })
+      setMessage({ ok: true, text: t('savedOk') })
     } catch (err) {
       setMessage({ ok: false, text: err.message })
     } finally {
@@ -97,7 +99,7 @@ export default function LlmSettingsCard() {
       setMessage({
         ok: result.ok,
         text: result.models?.length
-          ? `${result.message}，请在下方选择模型`
+          ? tf('testOkPickModel', { msg: result.message })
           : result.message,
       })
     } catch (err) {
@@ -113,13 +115,13 @@ export default function LlmSettingsCard() {
         className="flex w-full items-center text-sm font-bold text-slate-800"
         onClick={() => setOpen(!open)}
       >
-        AI 服务设置
+        {t('aiSettings')}
         <span className="ml-auto text-xs font-normal text-slate-400">
           {loading
-            ? '加载中…'
+            ? t('loading')
             : effective
-              ? `${effective.label}${effective.model ? ` · ${effective.model}` : ''}${effective.source === 'env' ? '（环境变量）' : ''}`
-              : '未配置'}
+              ? `${effective.label}${effective.model ? ` · ${effective.model}` : ''}${effective.source === 'env' ? t('envSource') : ''}`
+              : t('notConfigured')}
           {open ? ' ▲' : ' ▼'}
         </span>
       </button>
@@ -127,7 +129,7 @@ export default function LlmSettingsCard() {
       {open && (
         <div className="mt-3 space-y-3 text-sm">
           <label className="block">
-            <span className="text-slate-500">服务商</span>
+            <span className="text-slate-500">{t('provider')}</span>
             <select
               className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
               value={providerKey}
@@ -142,14 +144,14 @@ export default function LlmSettingsCard() {
           </label>
 
           <label className="block">
-            <span className="text-slate-500">API Key</span>
+            <span className="text-slate-500">{t('apiKey')}</span>
             <input
               type="password"
               className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
               placeholder={
                 savedKeyMasked
-                  ? `已保存密钥 ${savedKeyMasked}，留空表示不变`
-                  : '留空则保持已保存的密钥'
+                  ? tf('apiKeyPlaceholderSaved', { masked: savedKeyMasked })
+                  : t('apiKeyPlaceholderNew')
               }
               value={apiKey}
               onChange={(e) => {
@@ -160,17 +162,17 @@ export default function LlmSettingsCard() {
             />
             {savedKeyMasked && (
               <span className="mt-1 block text-xs text-slate-400">
-                当前已保存密钥：{savedKeyMasked}（保存后输入框清空属正常，密钥仍在）
+                {tf('apiKeySavedNote', { masked: savedKeyMasked })}
               </span>
             )}
           </label>
 
           {providerKey === 'custom' && (
             <label className="block">
-              <span className="text-slate-500">Base URL</span>
+              <span className="text-slate-500">{t('baseUrl')}</span>
               <input
                 className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
-                placeholder="如 http://localhost:3000/v1"
+                placeholder={t('baseUrlPlaceholder')}
                 value={baseUrl}
                 onChange={(e) => {
                   setBaseUrl(e.target.value)
@@ -182,7 +184,7 @@ export default function LlmSettingsCard() {
 
           {models.length > 0 && (
             <label className="block">
-              <span className="text-slate-500">模型（从服务端拉取）</span>
+              <span className="text-slate-500">{t('modelLabel')}</span>
               <select
                 className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
                 value={model}
@@ -209,14 +211,14 @@ export default function LlmSettingsCard() {
               onClick={handleTest}
               disabled={busy}
             >
-              测试连接
+              {t('testConnection')}
             </button>
             <button
               className="rounded bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700 disabled:opacity-50"
               onClick={handleSave}
               disabled={busy || (models.length > 0 && !model)}
             >
-              保存
+              {t('save')}
             </button>
           </div>
         </div>

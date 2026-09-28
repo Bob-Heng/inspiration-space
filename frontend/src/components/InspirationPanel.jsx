@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { STATUS_LABELS, summarize } from '../vocab'
+import TranslatedText from './TranslatedText'
+import { useLang } from '../i18n'
+import { statusLabel } from '../vocab'
 
 /**
  * 灵感录入与队列组件。可复用：嵌入首页与后续审议工作台，不设独立灵感页。
@@ -9,6 +11,7 @@ import { STATUS_LABELS, summarize } from '../vocab'
  */
 export default function InspirationPanel() {
   const navigate = useNavigate()
+  const { t, tf, lang } = useLang()
   const [items, setItems] = useState([])
   const [content, setContent] = useState('')
   const [sourceDate, setSourceDate] = useState('')
@@ -46,7 +49,7 @@ export default function InspirationPanel() {
     try {
       await api.createInspiration({
         content: content.trim(),
-        source_date: sourceDate || null,
+        source_date: sourceDate || new Date().toLocaleDateString('sv-SE'),
       })
       setContent('')
       setSourceDate('')
@@ -119,7 +122,7 @@ export default function InspirationPanel() {
   }
 
   async function handleDelete(id) {
-    if (!window.confirm(`确认删除灵感 #${id}？`)) return
+    if (!window.confirm(tf('deleteConfirm', { id }))) return
     try {
       await api.deleteInspiration(id)
       await load()
@@ -136,13 +139,13 @@ export default function InspirationPanel() {
         <textarea
           className="w-full rounded border border-slate-300 p-3 outline-none focus:border-slate-500"
           rows={3}
-          placeholder="记下一条灵感…"
+          placeholder={t('recordPlaceholder')}
           value={content}
           onChange={(e) => setContent(e.target.value)}
         />
         <div className="mt-2 flex items-center gap-3">
           <label className="text-sm text-slate-500">
-            来源日期（可空）
+            {t('sourceDateOptional')}
             <input
               type="date"
               className="ml-2 rounded border border-slate-300 px-2 py-1"
@@ -154,7 +157,7 @@ export default function InspirationPanel() {
             type="submit"
             className="ml-auto rounded bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700"
           >
-            录入待审队列
+            {t('addToQueue')}
           </button>
           <button
             type="button"
@@ -162,7 +165,7 @@ export default function InspirationPanel() {
             className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             onClick={() => fileInputRef.current?.click()}
           >
-            {importing ? 'AI 拆解中…' : '导入 docx'}
+            {importing ? t('importing') : t('importDocx')}
           </button>
           <input
             ref={fileInputRef}
@@ -178,7 +181,11 @@ export default function InspirationPanel() {
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 shadow">
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-semibold text-slate-800">
-              导入预览：{preview.filename}（拆解出 {preview.items.length} 条，勾选 {selectedCount} 条）
+              {tf('importPreview', {
+                name: preview.filename,
+                total: preview.items.length,
+                n: selectedCount,
+              })}
             </h2>
             <div className="ml-auto flex gap-2">
               <button
@@ -186,20 +193,18 @@ export default function InspirationPanel() {
                 className="rounded bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
                 onClick={handleConfirmImport}
               >
-                {confirming ? '入库中…' : `确认入库（${selectedCount} 条）`}
+                {confirming ? t('confirmingImport') : tf('confirmImport', { n: selectedCount })}
               </button>
               <button
                 disabled={confirming}
                 className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-white"
                 onClick={() => setPreview(null)}
               >
-                取消
+                {t('cancel')}
               </button>
             </div>
           </div>
-          <p className="mt-1 text-xs text-slate-500">
-            AI 只切割不改写；识别不到日期的条目日期留空。入库前可勾选、编辑正文与日期。
-          </p>
+          <p className="mt-1 text-xs text-slate-500">{t('importHint')}</p>
           <ul className="mt-3 space-y-2">
             {preview.items.map((item, index) => (
               <li
@@ -223,7 +228,7 @@ export default function InspirationPanel() {
                       onChange={(e) => updatePreviewItem(index, { content: e.target.value })}
                     />
                     <label className="block text-xs text-slate-500">
-                      来源日期
+                      {t('colSourceDate')}
                       <input
                         type="date"
                         className="ml-2 rounded border border-slate-300 px-2 py-0.5"
@@ -242,7 +247,7 @@ export default function InspirationPanel() {
       <div className="flex items-center gap-3">
         <input
           className="w-64 rounded border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-slate-500"
-          placeholder="关键词搜索"
+          placeholder={t('keywordSearch')}
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
         />
@@ -251,13 +256,13 @@ export default function InspirationPanel() {
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
         >
-          <option value="">全部状态</option>
-          <option value="pending">待审议</option>
-          <option value="in_review">审议中</option>
-          <option value="reviewed">已审议</option>
-          <option value="rejected">已否定</option>
+          <option value="">{t('allStatus')}</option>
+          <option value="pending">{statusLabel('pending', lang)}</option>
+          <option value="in_review">{statusLabel('in_review', lang)}</option>
+          <option value="reviewed">{statusLabel('reviewed', lang)}</option>
+          <option value="rejected">{statusLabel('rejected', lang)}</option>
         </select>
-        <span className="text-sm text-slate-500">共 {items.length} 条</span>
+        <span className="text-sm text-slate-500">{tf('totalItems', { n: items.length })}</span>
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -278,13 +283,13 @@ export default function InspirationPanel() {
                     className="rounded bg-slate-800 px-3 py-1 text-sm text-white"
                     onClick={() => handleSaveEdit(item.id)}
                   >
-                    保存
+                    {t('save')}
                   </button>
                   <button
                     className="rounded border border-slate-300 px-3 py-1 text-sm"
                     onClick={() => setEditingId(null)}
                   >
-                    取消
+                    {t('cancel')}
                   </button>
                 </div>
               </div>
@@ -294,10 +299,17 @@ export default function InspirationPanel() {
                   #{item.id}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-slate-800">{summarize(item.content)}</p>
+                  <p className="text-slate-800">
+                    <TranslatedText
+                      contentZh={item.content_zh ?? item.content}
+                      contentEn={item.content_en ?? item.content}
+                      originalLang={item.original_lang}
+                      clamp
+                    />
+                  </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    {item.source_date ?? '无来源日期'} ·{' '}
-                    {STATUS_LABELS[item.status] ?? item.status}
+                    {item.source_date ?? t('noSourceDateFull')} ·{' '}
+                    {statusLabel(item.status, lang)}
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-2">
@@ -306,7 +318,7 @@ export default function InspirationPanel() {
                       className="text-sm text-slate-800 hover:underline"
                       onClick={() => navigate(`/review?inspiration=${item.id}`)}
                     >
-                      开始审议
+                      {t('startReview')}
                     </button>
                   )}
                   <button
@@ -316,13 +328,13 @@ export default function InspirationPanel() {
                       setEditingContent(item.content)
                     }}
                   >
-                    编辑
+                    {t('edit')}
                   </button>
                   <button
                     className="text-sm text-red-500 hover:text-red-700"
                     onClick={() => handleDelete(item.id)}
                   >
-                    删除
+                    {t('delete')}
                   </button>
                 </div>
               </div>
@@ -331,7 +343,7 @@ export default function InspirationPanel() {
         ))}
         {items.length === 0 && (
           <li className="rounded-lg bg-white p-6 text-center text-sm text-slate-400 shadow">
-            队列为空
+            {t('queueEmpty')}
           </li>
         )}
       </ul>

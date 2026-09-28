@@ -153,6 +153,7 @@ export const api = {
     })
   },
   getViewpointHistory: (id) => request(`/api/viewpoints/${id}/history`),
+  getReviewHistory: (id) => request(`/api/viewpoints/${id}/review-history`),
   getClassifiedViewpoints: () => request('/api/viewpoints/classified'),
 
   getInspiration: (id) => request(`/api/inspirations/${id}`),

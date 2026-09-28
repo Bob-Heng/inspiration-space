@@ -1,9 +1,12 @@
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import InspirationPanel from '../components/InspirationPanel'
+import PageHeader from '../components/PageHeader'
+import { LangSelect, useLang } from '../i18n'
 
 export default function HomePage() {
   const navigate = useNavigate()
+  const { t } = useLang()
 
   async function handleLogout() {
     await api.logout().catch(() => {})
@@ -12,33 +15,26 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center px-4 py-3">
-          <h1 className="text-lg font-bold text-slate-800">灵感空间</h1>
-          <div className="ml-auto flex items-center gap-4">
-            <Link
-              to="/viewpoints"
-              className="text-sm text-slate-500 hover:text-slate-800"
-            >
-              观点库
-            </Link>
-            <Link
-              to="/review"
-              className="text-sm text-slate-500 hover:text-slate-800"
-            >
-              审议工作台
-            </Link>
+      <PageHeader
+        current="home"
+        subtitle={t('home')}
+        extras={
+          <>
+            <LangSelect />
             <button
               className="text-sm text-slate-500 hover:text-slate-800"
               onClick={handleLogout}
             >
-              登出
+              {t('logout')}
             </button>
-          </div>
+          </>
+        }
+      />
+      <main className="mx-auto w-full max-w-7xl px-4 py-6">
+        {/* 与审议工作台中栏（lg:col-span-6）等宽 */}
+        <div className="lg:mx-auto lg:w-1/2">
+          <InspirationPanel />
         </div>
-      </header>
-      <main className="mx-auto max-w-3xl px-4 py-6">
-        <InspirationPanel />
       </main>
     </div>
   )
