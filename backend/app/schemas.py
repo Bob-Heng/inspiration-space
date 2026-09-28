@@ -25,6 +25,9 @@ class InspirationUpdate(BaseModel):
 class InspirationOut(BaseModel):
     id: int
     content: str
+    content_zh: str | None = None
+    content_en: str | None = None
+    original_lang: str = 'zh'
     source_date: date | None
     source_type: str
     status: str
@@ -67,6 +70,9 @@ class ReviewMessageOut(BaseModel):
     id: int
     role: str
     content: str
+    content_zh: str | None = None
+    content_en: str | None = None
+    original_lang: str = 'zh'
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -82,6 +88,7 @@ class ReviewSessionOut(BaseModel):
     inspiration: InspirationOut
     messages: list[ReviewMessageOut] = []
     analysis: dict | None = None
+    analysis_en: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -124,6 +131,9 @@ class ViewpointOut(BaseModel):
     id: int
     type: str
     content: str
+    content_zh: str | None = None
+    content_en: str | None = None
+    original_lang: str = 'zh'
     source_inspiration_id: int | None
     source_date: date | None
     layer: str | None

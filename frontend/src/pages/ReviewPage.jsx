@@ -1,25 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
+import PageHeader from '../components/PageHeader'
 import { api } from '../api'
 import AnalysisCard from '../components/review/AnalysisCard'
 import DecisionBar from '../components/review/DecisionBar'
 import DiscussionCard from '../components/review/DiscussionCard'
 import RelationsPanel from '../components/review/RelationsPanel'
 import ReviewQueue from '../components/review/ReviewQueue'
-
-const DECISION_NOTICES = {
-  accept: (r) => `已采纳，观点 #${r.viewpoint_id} 已入库`,
-  accept_modified: (r) => `已采纳（修改后），观点 #${r.viewpoint_id} 已入库`,
-  reject: () => '已否定，该灵感已标记为已否定',
-  defer: () => '已暂缓，灵感回到待审队列',
-}
+import TranslatedText from '../components/TranslatedText'
+import { useLang } from '../i18n'
 
 export default function ReviewPage() {
+  const { t, tf, lang } = useLang()
   const [searchParams, setSearchParams] = useSearchParams()
   const [queue, setQueue] = useState([])
   const [queueError, setQueueError] = useState(null)
   const [session, setSession] = useState(null)
   const [analysis, setAnalysis] = useState(null)
+  const [analysisEn, setAnalysisEn] = useState(null)
   const [related, setRelated] = useState([])
   const [sessionLoading, setSessionLoading] = useState(false)
   const [analysisLoading, setAnalysisLoading] = useState(false)
@@ -52,10 +50,11 @@ export default function ReviewPage() {
     try {
       const s = await api.startReviewSession(inspirationId)
       setSession(s)
-      await restoreAnalysis(s.analysis ?? null)
+      await restoreAnalysis(s.analysis ?? null, s.analysis_en ?? null)
     } catch (err) {
       setSession(null)
       setAnalysis(null)
+      setAnalysisEn(null)
       setRelated([])
       setError(err.message)
     } finally {
@@ -63,9 +62,10 @@ export default function ReviewPage() {
     }
   }, [])
 
-  // 恢复/展示一次分析结果（含右侧关联观点的加载）
-  async function restoreAnalysis(result) {
+  // 恢复/展示一次分析结果（含右侧关联观点的加载）；resultEn 为会话伴生的英文版
+  async function restoreAnalysis(result, resultEn = null) {
     setAnalysis(result)
+    setAnalysisEn(resultEn)
     if (!result?.relations?.length) {
       setRelated([])
       return
@@ -93,7 +93,7 @@ export default function ReviewPage() {
           setSession(s)
           setSearchParams({ inspiration: String(s.inspiration_id) })
           attemptedRef.current = s.inspiration_id
-          return restoreAnalysis(s.analysis ?? null)
+          return restoreAnalysis(s.analysis ?? null, s.analysis_en ?? null)
         }
       })
       .catch(() => {})
@@ -121,6 +121,9 @@ export default function ReviewPage() {
     try {
       const result = await api.analyzeInspiration(session.inspiration_id)
       setAnalysis(result)
+      // 分析接口只回原文；英文版随会话持久化，回拉活动会话取 analysis_en（失败则用原文）
+      const fresh = await api.getActiveSession().catch(() => null)
+      setAnalysisEn(fresh?.analysis_en ?? null)
       const fetched = await Promise.all(
         (result.relations ?? []).map(async (relation) => {
           try {
@@ -163,51 +166,54 @@ export default function ReviewPage() {
 
   async function handleDecision(payload) {
     const result = await api.submitReviewDecision(session.id, payload)
-    const make = DECISION_NOTICES[result.decision_type]
-    setNotice(make ? make(result) : '决策已提交')
+    const template = t('decisionDone')[result.decision_type]
+    setNotice(
+      template
+        ? template.replaceAll('{id}', String(result.viewpoint_id ?? ''))
+        : t('decisionSubmitted'),
+    )
     // 保持 attemptedRef 为已审议灵感 id：防止清空会话的瞬间旧 URL 参数
     // 触发对该灵感的二次开会话（后端返回"已审议完成，不得再次审议"）
     attemptedRef.current = session.inspiration_id
     setSession(null)
     setAnalysis(null)
+    setAnalysisEn(null)
     setRelated([])
     setSearchParams({})
     await loadQueue()
   }
 
-  return (
-    <div className="min-h-screen bg-slate-50 pb-24">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-7xl items-center px-4 py-3">
-          <h1 className="text-lg font-bold text-slate-800">审议工作台</h1>
-          <div className="ml-auto flex items-center gap-4">
-            <Link
-              to="/viewpoints"
-              className="text-sm text-slate-500 hover:text-slate-800"
-            >
-              观点库
-            </Link>
-            <Link to="/" className="text-sm text-slate-500 hover:text-slate-800">
-              返回首页
-            </Link>
-          </div>
-        </div>
-      </header>
+  // 展示用分析：英文界面且会话带英文版时替换文本字段；layer/tags 为数据值沿用原对象
+  const displayAnalysis =
+    lang === 'en' && analysis && analysisEn
+      ? {
+          ...analysis,
+          adoption_reason: analysisEn.adoption_reason ?? analysis.adoption_reason,
+          strongest_counterargument:
+            analysisEn.strongest_counterargument ?? analysis.strongest_counterargument,
+          questions: analysisEn.questions ?? analysis.questions,
+        }
+      : analysis
 
-      <main className="mx-auto max-w-7xl px-4 py-6">
+  return (
+    <div className="flex min-h-screen flex-col bg-slate-50 pb-20 lg:h-screen lg:overflow-hidden lg:pb-20">
+      <PageHeader current="review" subtitle={t('reviewWorkbench')} />
+
+      <main className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 flex-col px-4 py-6 lg:overflow-hidden">
         {notice && (
-          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          <div className="mb-4 shrink-0 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
             {notice}
           </div>
         )}
         {error && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <div className="mb-4 shrink-0 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <aside className="lg:col-span-3">
+        {/* 三栏各自独立滚动：栏位固定，内容在栏内滚动，互不影响 */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-12 lg:overflow-hidden">
+          <aside className="min-h-0 lg:col-span-3 lg:h-full lg:overflow-y-auto lg:pr-1">
             <ReviewQueue
               items={queue}
               selectedId={session?.inspiration_id ?? null}
@@ -216,22 +222,28 @@ export default function ReviewPage() {
             />
           </aside>
 
-          <section className="space-y-4 lg:col-span-6">
+          <section className="min-h-0 space-y-4 lg:col-span-6 lg:h-full lg:overflow-y-auto lg:pr-1">
             {session ? (
               <>
                 <div className="rounded-lg bg-white p-4 shadow">
                   <div className="flex items-center gap-3 text-xs text-slate-500">
                     <span className="font-mono">#{session.inspiration.id}</span>
                     <span>
-                      来源日期：{session.inspiration.source_date ?? '无'}
+                      {tf('sourceDate', {
+                        date: session.inspiration.source_date ?? t('noSourceDate'),
+                      })}
                     </span>
                   </div>
                   <p className="mt-2 whitespace-pre-wrap text-slate-800">
-                    {session.inspiration.content}
+                    <TranslatedText
+                      contentZh={session.inspiration.content_zh ?? session.inspiration.content}
+                      contentEn={session.inspiration.content_en ?? session.inspiration.content}
+                      originalLang={session.inspiration.original_lang}
+                    />
                   </p>
                 </div>
                 <AnalysisCard
-                  analysis={analysis}
+                  analysis={displayAnalysis}
                   loading={analysisLoading}
                   onAnalyze={handleAnalyze}
                 />
@@ -243,14 +255,12 @@ export default function ReviewPage() {
               </>
             ) : (
               <div className="rounded-lg bg-white p-10 text-center text-sm text-slate-400 shadow">
-                {sessionLoading
-                  ? '正在建立审议会话…'
-                  : '从左侧待审队列选择一条灵感，开始审议。'}
+                {sessionLoading ? t('creatingSession') : t('pickInspiration')}
               </div>
             )}
           </section>
 
-          <aside className="lg:col-span-3">
+          <aside className="min-h-0 lg:col-span-3 lg:h-full lg:overflow-y-auto lg:pr-1">
             <RelationsPanel analysis={analysis} related={related} />
           </aside>
         </div>

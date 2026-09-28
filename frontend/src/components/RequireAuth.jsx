@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Navigate, Outlet } from 'react-router-dom'
 import { api } from '../api'
+import { useLang } from '../i18n'
 
 // 路由保护：未登录跳登录页
 export default function RequireAuth() {
+  const { t } = useLang()
   const [state, setState] = useState({ loading: true, authed: false })
 
   useEffect(() => {
@@ -16,7 +18,7 @@ export default function RequireAuth() {
   if (state.loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 text-slate-500">
-        加载中…
+        {t('loading')}
       </div>
     )
   }

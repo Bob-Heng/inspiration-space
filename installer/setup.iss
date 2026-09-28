@@ -1,6 +1,6 @@
 ; 灵感空间 v1.0.0 安装包脚本（Inno Setup 6）
 #define MyAppName "灵感空间"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppExeName "InspirationSpace.exe"
 #define SourceDir "..\\backend\\dist\\InspirationSpace"
 
@@ -12,7 +12,7 @@ AppVerName={#MyAppName} v{#MyAppVersion}
 DefaultDirName={autopf}\InspirationSpace
 DefaultGroupName={#MyAppName}
 OutputDir=Output
-OutputBaseFilename=InspirationSpace-Setup-1.0.0
+OutputBaseFilename=InspirationSpace-Setup-1.1.0
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

@@ -1,6 +1,6 @@
 from datetime import datetime, date
 
-from sqlalchemy import Date, ForeignKey, String, Text, func
+from sqlalchemy import Date, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -26,6 +26,10 @@ class Inspiration(Base):
     source_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), default="manual")
     status: Mapped[str] = mapped_column(String(20), default="pending")
+    # 原生双语：content 为原文镜像；content_zh/content_en 为两个语言版本
+    content_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_lang: Mapped[str] = mapped_column(String(2), default="zh")
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, server_default=func.now(), onupdate=func.now()
@@ -50,6 +54,9 @@ class Viewpoint(Base):
     discipline: Mapped[str | None] = mapped_column(String(20), nullable=True)
     scene: Mapped[str | None] = mapped_column(String(20), nullable=True)
     status: Mapped[str] = mapped_column(String(20))
+    content_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_lang: Mapped[str] = mapped_column(String(2), default="zh")
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, server_default=func.now(), onupdate=func.now()
@@ -102,6 +109,8 @@ class ReviewSession(Base):
     ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     # 最近一次 AI 审议分析结果（JSON），随会话持久化，关窗重开后恢复
     analysis_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 分析结果的英文版（JSON），生成时同步翻译
+    analysis_json_en: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ReviewMessage(Base):
@@ -113,6 +122,9 @@ class ReviewMessage(Base):
     session_id: Mapped[int] = mapped_column(ForeignKey("review_sessions.id"))
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
+    content_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_lang: Mapped[str] = mapped_column(String(2), default="zh")
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
 
 

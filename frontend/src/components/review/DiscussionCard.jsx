@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import TranslatedText from '../TranslatedText'
+import { useLang } from '../../i18n'
 
 export default function DiscussionCard({ session, sending, onSend }) {
+  const { t, tf } = useLang()
   const [draft, setDraft] = useState('')
   const [copiedId, setCopiedId] = useState(null)
   const listRef = useRef(null)
@@ -38,12 +41,12 @@ export default function DiscussionCard({ session, sending, onSend }) {
 
   return (
     <div className="rounded-lg bg-white p-4 shadow">
-      <h2 className="text-sm font-bold text-slate-800">讨论</h2>
+      <h2 className="text-sm font-bold text-slate-800">{t('discussion')}</h2>
 
       <div ref={listRef} className="mt-3 max-h-96 space-y-3 overflow-y-auto pr-1">
         {messages.length === 0 && (
           <p className="py-4 text-center text-sm text-slate-400">
-            还没有讨论记录，先就这条灵感与 AI 聊聊吧。
+            {t('discussionEmpty')}
           </p>
         )}
         {messages.map((msg) => (
@@ -64,7 +67,7 @@ export default function DiscussionCard({ session, sending, onSend }) {
                     msg.role === 'user' ? 'text-slate-300' : 'text-slate-400'
                   }`}
                 >
-                  {msg.role === 'user' ? '我' : 'AI'}
+                  {msg.role === 'user' ? t('me') : t('ai')}
                 </p>
                 {msg.role !== 'user' && (
                   <button
@@ -72,22 +75,28 @@ export default function DiscussionCard({ session, sending, onSend }) {
                     className="text-xs text-slate-400 hover:text-slate-700"
                     onClick={() => handleCopy(msg)}
                   >
-                    {copiedId === msg.id ? '已复制' : '复制'}
+                    {copiedId === msg.id ? t('copied') : t('copy')}
                   </button>
                 )}
               </div>
-              <p className="whitespace-pre-wrap">{msg.content}</p>
+              <p className="whitespace-pre-wrap">
+                <TranslatedText
+                  contentZh={msg.content_zh ?? msg.content}
+                  contentEn={msg.content_en ?? msg.content}
+                  originalLang={msg.original_lang}
+                />
+              </p>
             </div>
           </div>
         ))}
-        {sending && <p className="text-center text-xs text-slate-400">AI 正在思考…</p>}
+        {sending && <p className="text-center text-xs text-slate-400">{t('thinking')}</p>}
       </div>
 
       <form onSubmit={handleSubmit} className="mt-3 flex gap-2">
         <textarea
           className="flex-1 rounded border border-slate-300 p-2 text-sm outline-none focus:border-slate-500 disabled:bg-slate-50"
           rows={2}
-          placeholder={active ? '输入你的想法…' : '会话已结束，无法继续讨论'}
+          placeholder={active ? t('inputPlaceholder') : t('sessionClosed')}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           disabled={!active || sending}
@@ -97,12 +106,12 @@ export default function DiscussionCard({ session, sending, onSend }) {
           className="self-end rounded bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
           disabled={!active || sending || !draft.trim()}
         >
-          {sending ? '发送中…' : '发送'}
+          {sending ? t('sending') : t('send')}
         </button>
       </form>
       {!active && (
         <p className="mt-2 text-xs text-slate-400">
-          当前会话状态为「{session?.status}」，输入区已禁用。
+          {tf('sessionStatus', { status: session?.status })}
         </p>
       )}
     </div>

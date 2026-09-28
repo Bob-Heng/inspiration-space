@@ -111,6 +111,7 @@ def apply_review_decision(
     db: Session,
     session: ReviewSession,
     *,
+    bilingual: dict | None = None,
     decision_type: str,
     final_content: str | None = None,
     reason: str | None = None,
@@ -176,6 +177,7 @@ def apply_review_decision(
         viewpoint = Viewpoint(
             type="raw",
             content=content,
+            **(bilingual or {}),
             source_inspiration_id=inspiration.id,
             source_date=inspiration.source_date,
             layer=layer_code,

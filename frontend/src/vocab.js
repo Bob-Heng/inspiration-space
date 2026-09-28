@@ -1,3 +1,5 @@
+import { LAYER_EN, STRINGS, TAG_EN } from './i18n'
+
 export const STATUS_LABELS = {
   pending: '待审议',
   in_review: '审议中',
@@ -50,17 +52,42 @@ export const EVENT_TYPE_LABELS = {
   split: '拆分',
 }
 
+// ---- 语言感知辅助（lang = 'zh' | 'en'） ----
+export function layerLabel(code, lang) {
+  if (!code) return null
+  return lang === 'en' ? (LAYER_EN[code] ?? code) : (LAYER_LABELS[code] ?? code)
+}
+
+export function statusLabel(status, lang) {
+  return STRINGS[lang]?.statusLabels?.[status] ?? status
+}
+
+export function relationLabel(type, lang) {
+  return STRINGS[lang]?.relationLabels?.[type] ?? type
+}
+
+export function eventLabel(type, lang) {
+  return STRINGS[lang]?.eventLabels?.[type] ?? type
+}
+
+/** 标签值入库为中文；英文界面仅翻译显示 */
+export function tagLabel(value, lang) {
+  if (!value) return value
+  return lang === 'en' ? (TAG_EN[value] ?? value) : value
+}
+
 export function summarize(content, max = 80) {
   return content.length > max ? `${content.slice(0, max)}…` : content
 }
 
-export function formatDateTime(iso) {
+export function formatDateTime(iso, lang = 'zh') {
   if (!iso) return '—'
-  return new Date(iso).toLocaleString('zh-CN', { hour12: false })
+  return new Date(iso).toLocaleString(lang === 'en' ? 'en-US' : 'zh-CN', { hour12: false })
 }
 
-export function tagLine(viewpoint) {
+export function tagLine(viewpoint, lang = 'zh') {
   return [viewpoint.domain, viewpoint.circle, viewpoint.discipline, viewpoint.scene]
     .filter(Boolean)
+    .map((v) => tagLabel(v, lang))
     .join(' / ')
 }

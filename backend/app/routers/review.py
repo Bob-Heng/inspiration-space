@@ -23,6 +23,7 @@ from ..ai.prompts.discussion import PROMPT_VERSION, build_discussion_messages
 from ..auth import require_user
 from ..db import get_db
 from ..domain.review import ReviewError, apply_review_decision, open_review_session
+from ..domain.translation import make_bilingual
 from ..models import Inspiration, ReviewMessage, ReviewSession, Viewpoint
 from ..schemas import (
     DecisionOut,
@@ -64,6 +65,9 @@ def _session_out(db: Session, session: ReviewSession) -> ReviewSessionOut:
         ),
         messages=[ReviewMessageOut.model_validate(m) for m in messages],
         analysis=json.loads(session.analysis_json) if session.analysis_json else None,
+        analysis_en=(
+            json.loads(session.analysis_json_en) if session.analysis_json_en else None
+        ),
     )
 
 
@@ -124,7 +128,10 @@ async def post_message(
     inspiration = db.get(Inspiration, session.inspiration_id)
 
     user_message = ReviewMessage(
-        session_id=session.id, role="user", content=payload.content
+        session_id=session.id,
+        role="user",
+        content=payload.content,
+        **await make_bilingual(db, payload.content),
     )
     db.add(user_message)
     db.commit()
@@ -175,7 +182,10 @@ async def post_message(
         output=reply,
     )
     assistant_message = ReviewMessage(
-        session_id=session.id, role="assistant", content=reply
+        session_id=session.id,
+        role="assistant",
+        content=reply,
+        **await make_bilingual(db, reply, original_lang="zh"),
     )
     db.add(assistant_message)
     db.commit()
@@ -187,16 +197,30 @@ async def post_message(
 
 
 @router.post("/sessions/{session_id}/decision", response_model=DecisionOut)
-def post_decision(
+async def post_decision(
     session_id: int, payload: DecisionRequest, db: Session = Depends(get_db)
 ) -> DecisionOut:
     """审议决策：采纳/修改后采纳/否定在一个事务内落库，任一步失败整体回滚；
     暂缓只挂起会话、灵感回到待审队列，不产生终态。"""
     session = _get_session_or_404(session_id, db)
+    bilingual = None
+    if payload.decision_type in ("accept", "accept_modified"):
+        final_text = (payload.final_content or "").strip()
+        inspiration = db.get(Inspiration, session.inspiration_id)
+        if final_text and final_text == (inspiration.content or "").strip():
+            # 未修改：直接携带灵感的双语版本
+            bilingual = {
+                "content_zh": inspiration.content_zh,
+                "content_en": inspiration.content_en,
+                "original_lang": inspiration.original_lang,
+            }
+        elif final_text:
+            bilingual = await make_bilingual(db, final_text)
     try:
         outcome = apply_review_decision(
             db,
             session,
+            bilingual=bilingual,
             decision_type=payload.decision_type,
             final_content=payload.final_content,
             reason=payload.reason,

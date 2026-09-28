@@ -20,6 +20,7 @@ from ..ai.schemas import AnalysisResult
 from ..auth import require_user
 from ..db import get_db
 from ..domain.analysis import validate_analysis_result
+from ..domain.translation import bilingual_analysis
 from ..models import Inspiration, ReviewSession, Viewpoint
 
 router = APIRouter(
@@ -67,5 +68,8 @@ async def analyze_inspiration(
     )
     if active_session is not None:
         active_session.analysis_json = result.model_dump_json()
+        active_session.analysis_json_en = await bilingual_analysis(
+            db, active_session.analysis_json
+        )
         db.commit()
     return result
