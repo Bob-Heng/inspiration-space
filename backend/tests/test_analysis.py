@@ -15,7 +15,6 @@ def _valid_result(**overrides) -> AnalysisResult:
         "layer": "法",
         "tags": {"domain": "文化", "circle": None, "discipline": "经济学", "scene": None},
         "relations": [],
-        "questions": ["边界是什么？"],
     }
     data.update(overrides)
     return AnalysisResult(**data)
@@ -29,7 +28,7 @@ class TestAnalysisSchema:
 
     @pytest.mark.parametrize(
         "missing_field",
-        ["adoption_reason", "strongest_counterargument", "layer", "tags", "relations", "questions"],
+        ["adoption_reason", "strongest_counterargument", "layer", "tags", "relations"],
     )
     def test_三项分析及相关字段缺一即失败(self, missing_field):
         data = _valid_result().model_dump()
@@ -40,10 +39,6 @@ class TestAnalysisSchema:
     def test_空白理由被拒绝(self):
         with pytest.raises(ValidationError):
             _valid_result(adoption_reason="   ")
-
-    def test_疑问不能为空列表(self):
-        with pytest.raises(ValidationError):
-            _valid_result(questions=[])
 
 
 class TestAnalysisBusinessValidation:

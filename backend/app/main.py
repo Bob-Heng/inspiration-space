@@ -14,6 +14,7 @@ from . import config
 from .ai.newapi import probe_gateway
 from .auth import ensure_admin_user
 from .db import Base, SessionLocal, engine, ensure_schema_upgrades
+from .routers import ai_status as ai_status_router
 from .routers import analysis as analysis_router
 from .routers import auth as auth_router
 from .routers import export as export_router
@@ -35,6 +36,12 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
     await probe_gateway()
+    # 启动对账：AI 可用时后台补齐缺失的译文/标题（不阻塞启动）
+    import asyncio
+
+    from .domain.reconcile import reconcile_i18n
+
+    asyncio.create_task(reconcile_i18n())
     yield
 
 
@@ -58,6 +65,7 @@ app.add_middleware(
 
 app.include_router(auth_router.router)
 app.include_router(inspirations_router.router)
+app.include_router(ai_status_router.router)
 app.include_router(analysis_router.router)
 app.include_router(review_router.router)
 app.include_router(settings_router.router)

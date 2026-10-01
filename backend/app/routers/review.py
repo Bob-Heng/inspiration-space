@@ -22,6 +22,7 @@ from ..ai import (
 from ..ai.prompts.discussion import PROMPT_VERSION, build_discussion_messages
 from ..auth import require_user
 from ..db import get_db
+from ..errors import biz_error
 from ..domain.review import ReviewError, apply_review_decision, open_review_session
 from ..domain.translation import make_bilingual
 from ..models import Inspiration, ReviewMessage, ReviewSession, Viewpoint
@@ -74,7 +75,7 @@ def _session_out(db: Session, session: ReviewSession) -> ReviewSessionOut:
 def _get_session_or_404(session_id: int, db: Session) -> ReviewSession:
     session = db.get(ReviewSession, session_id)
     if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="审议会话不存在")
+        raise biz_error(404, "session_not_found", "审议会话不存在", "Review session not found")
     return session
 
 
@@ -87,11 +88,11 @@ def create_session(payload: ReviewSessionCreate, db: Session = Depends(get_db)) 
     """
     inspiration = db.get(Inspiration, payload.inspiration_id)
     if inspiration is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="灵感不存在")
+        raise biz_error(404, "inspiration_not_found", "灵感不存在", "Inspiration not found")
     try:
         session = open_review_session(db, inspiration)
     except ReviewError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise biz_error(409, "review_conflict", str(exc)) from exc
     return _session_out(db, session)
 
 
@@ -111,6 +112,92 @@ def get_session(session_id: int, db: Session = Depends(get_db)) -> ReviewSession
     return _session_out(db, _get_session_or_404(session_id, db))
 
 
+@router.post("/sessions/{session_id}/opening", response_model=ReviewMessageOut | None)
+async def post_opening(
+    session_id: int,
+    regenerate: bool = False,
+    db: Session = Depends(get_db),
+    provider: LLMProvider = Depends(llm_provider_dependency),
+):
+    """AI 首问：分析生成后，AI 在讨论区主动提出它认为当前最重要的一个问题。
+
+    会话已有消息时返回 None（不重复提问）。regenerate=True 时：
+    若用户尚未发言（讨论区只有 AI 首问），删除旧首问并按最新分析重新生成。
+    失败抛 503/502 双语错误。
+    """
+    session = _get_session_or_404(session_id, db)
+    if session.status != "active":
+        raise biz_error(
+            409, "session_not_active",
+            "会话不在进行中，无法生成首问",
+            "Session is not active",
+        )
+    existing = db.scalar(
+        select(ReviewMessage.id).where(ReviewMessage.session_id == session.id).limit(1)
+    )
+    if existing is not None:
+        if not regenerate:
+            return None
+        has_user_msg = db.scalar(
+            select(ReviewMessage.id)
+            .where(ReviewMessage.session_id == session.id, ReviewMessage.role == "user")
+            .limit(1)
+        )
+        if has_user_msg is not None:
+            return None  # 用户已发言，历史不动
+        db.query(ReviewMessage).where(
+            ReviewMessage.session_id == session.id,
+            ReviewMessage.role == "assistant",
+        ).delete()
+        db.commit()
+    inspiration = db.get(Inspiration, session.inspiration_id)
+    viewpoints = list(db.scalars(select(Viewpoint).order_by(Viewpoint.id)))
+    from ..ai.schemas import AnalysisResult
+
+    analysis = (
+        AnalysisResult.model_validate_json(session.analysis_json)
+        if session.analysis_json
+        else None
+    )
+    messages = build_discussion_messages(inspiration, viewpoints, analysis, [])
+    messages.append(
+        {
+            "role": "user",
+            "content": "（系统指令）请提出你判断在当前语境下最重要的一个问题，开启讨论。",
+        }
+    )
+    try:
+        reply = await provider.generate(messages)
+    except LLMUnavailableError as exc:
+        raise biz_error(
+            503, "ai_unavailable", str(exc),
+            "AI service is unavailable. Please check the AI service settings.",
+        ) from exc
+    except (LLMConfigError, LLMError) as exc:
+        raise biz_error(
+            502, "ai_bad_output", str(exc),
+            "The AI returned output that failed validation. Please retry.",
+        ) from exc
+    record_ai_call(
+        db,
+        provider=provider.provider_name,
+        model=provider.model,
+        prompt_version=PROMPT_VERSION,
+        input_snapshot=json.dumps(messages, ensure_ascii=False),
+        output=reply,
+    )
+    assistant_message = ReviewMessage(
+        session_id=session.id,
+        role="assistant",
+        content=reply,
+        **await make_bilingual(db, reply, original_lang="zh"),
+    )
+    db.add(assistant_message)
+    db.commit()
+    db.refresh(assistant_message)
+    return ReviewMessageOut.model_validate(assistant_message)
+
+
 @router.post("/sessions/{session_id}/messages", response_model=ReviewMessagePair)
 async def post_message(
     session_id: int,
@@ -121,9 +208,11 @@ async def post_message(
     """用户发言：落库后调 LLM 生成回复，双方消息均落库，调用留痕 ai_calls。"""
     session = _get_session_or_404(session_id, db)
     if session.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"会话不在进行中（当前状态：{session.status}），无法发言",
+        raise biz_error(
+            409,
+            "session_not_active",
+            f"会话不在进行中（当前状态：{session.status}），无法发言",
+            f"Session is not active ({session.status}); cannot post",
         )
     inspiration = db.get(Inspiration, session.inspiration_id)
 
@@ -157,8 +246,9 @@ async def post_message(
             input_snapshot=json.dumps(messages, ensure_ascii=False),
             output=f"调用失败：{exc}",
         )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        raise biz_error(
+            503, "ai_unavailable", str(exc),
+            "AI service is unavailable. Please check the AI service settings.",
         ) from exc
     except (LLMConfigError, LLMError) as exc:
         record_ai_call(
@@ -169,8 +259,9 @@ async def post_message(
             input_snapshot=json.dumps(messages, ensure_ascii=False),
             output=f"调用失败：{exc}",
         )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        raise biz_error(
+            502, "ai_bad_output", str(exc),
+            "The AI returned output that failed validation. Please retry.",
         ) from exc
 
     record_ai_call(
@@ -229,11 +320,34 @@ async def post_decision(
             relations=payload.relations,
         )
     except ReviewError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise biz_error(409, "review_conflict", str(exc)) from exc
+    if (
+        payload.regenerate_title
+        and payload.decision_type in ("accept", "accept_modified")
+        and outcome.viewpoint is not None
+    ):
+        # 用最终正文重新生成双语标题，并同步到来源灵感（全站一致）
+        from ..domain.titles import make_titles
+
+        titles = await make_titles(db, outcome.viewpoint.content)
+        if titles["title_zh"] is None:
+            raise biz_error(
+                503, "ai_unavailable",
+                "标题重新生成失败：大模型未接入。决策已生效，标题未变。",
+                "Title regeneration failed: AI unavailable. The decision was applied; titles unchanged.",
+            )
+        outcome.viewpoint.title_zh = titles["title_zh"]
+        outcome.viewpoint.title_en = titles["title_en"]
+        src = db.get(Inspiration, session.inspiration_id)
+        if src is not None:
+            src.title_zh = titles["title_zh"]
+            src.title_en = titles["title_en"]
+        db.commit()
     return DecisionOut(
         decision_id=outcome.decision.id if outcome.decision else None,
         decision_type=payload.decision_type,
         viewpoint_id=outcome.viewpoint.id if outcome.viewpoint else None,
+        display_id=session.inspiration_id,
         session_status=session.status,
         inspiration_status=db.get(Inspiration, session.inspiration_id).status,
     )

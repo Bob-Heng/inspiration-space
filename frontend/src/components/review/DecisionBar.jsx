@@ -41,11 +41,13 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
   const [tags, setTags] = useState({ domain: '', circle: '', discipline: '', scene: '' })
   const [selectedRelations, setSelectedRelations] = useState(new Set())
   const [submitting, setSubmitting] = useState(false)
+  const [regenerateTitle, setRegenerateTitle] = useState(false)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     setMode(null)
     setReason('')
+    setRegenerateTitle(false)
     setError(null)
     setFinalContent(session?.inspiration?.content ?? '')
     setLayer(analysis?.layer ?? '')
@@ -97,6 +99,7 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
         discipline: tags.discipline || null,
         scene: tags.scene || null,
       }
+      payload.regenerate_title = regenerateTitle
       payload.relations = (analysis?.relations ?? [])
         .filter((r) => selectedRelations.has(r.viewpoint_id))
         .map((r) => ({ viewpoint_id: r.viewpoint_id, type: r.type }))
@@ -225,7 +228,7 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
                             {relationLabel(rel.type, lang)}
                           </span>
                           <span className="min-w-0 truncate">
-                            #{rel.viewpoint_id}{' '}
+                            #{vp?.source_inspiration_id ?? rel.viewpoint_id}{' '}
                             {vp ? summarize(vp.content, 40) : ''}
                           </span>
                         </label>
@@ -236,6 +239,16 @@ export default function DecisionBar({ session, analysis, related, onSubmit }) {
               </div>
             )}
 
+            {mode === 'accept_modified' && (
+              <label className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={regenerateTitle}
+                  onChange={(e) => setRegenerateTitle(e.target.checked)}
+                />
+                {t('regenerateTitle')}
+              </label>
+            )}
             {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button

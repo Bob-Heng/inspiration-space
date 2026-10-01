@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api'
+import ItemTitle from '../ItemTitle'
 import TranslatedText from '../TranslatedText'
 import { StatusBadge } from '../../pages/ViewpointsPage'
 import { useLang } from '../../i18n'
@@ -49,7 +50,7 @@ export default function ClassifiedView({ onSelect }) {
                   className="rounded border border-slate-200 p-3 text-sm"
                 >
                   <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <span className="font-mono text-slate-400">#{item.id}</span>
+                    <span className="font-mono text-slate-400">#{item.source_inspiration_id ?? item.id}</span>
                     <StatusBadge status={item.status} />
                     <span>{item.source_date ?? t('noSourceDateFull')}</span>
                     <button
@@ -59,10 +60,11 @@ export default function ClassifiedView({ onSelect }) {
                       {t('detail')}
                     </button>
                   </div>
+                  <ItemTitle titleZh={item.title_zh} titleEn={item.title_en} id={item.id} />
                   <p className="mt-1 whitespace-pre-wrap text-slate-800">
                     <TranslatedText
-                      contentZh={item.content_zh ?? item.content}
-                      contentEn={item.content_en ?? item.content}
+                      contentZh={item.content_zh}
+                      contentEn={item.content_en}
                       originalLang={item.original_lang}
                       clamp
                     />

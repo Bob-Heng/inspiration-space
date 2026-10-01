@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..auth import create_initial_user, has_any_user, require_user
+from ..auth import create_initial_user, has_any_user, recover_password, require_user
 from ..db import get_db
 from ..models import User
 from ..security import verify_password
@@ -28,7 +28,7 @@ def login(
     if user is None or not verify_password(password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户名或密码错误",
+            detail={"code": "bad_credentials", "zh": "用户名或密码错误", "en": "Wrong username or password"},
         )
     request.session["user_id"] = user.id
     return CurrentUser(username=user.username)
@@ -36,13 +36,44 @@ def login(
 
 @router.get("/status")
 def auth_status(db: Session = Depends(get_db)) -> dict:
-    """公开接口：是否已初始化账号（前端据此决定显示登录页还是初始化页）。"""
-    return {"initialized": has_any_user(db)}
+    """公开接口：是否已初始化账号，以及可用的找回方式（注册时留了哪些信息）。"""
+    from ..models import User
+    from sqlalchemy import select as _select
+
+    initialized = has_any_user(db)
+    methods = []
+    if initialized:
+        user = db.scalar(_select(User).limit(1))
+        if user.phone:
+            methods.append("phone")
+        if user.birthday:
+            methods.append("birthday")
+    return {"initialized": initialized, "recovery_methods": methods}
+
+
+class RecoverIn(BaseModel):
+    method: str  # phone | birthday
+    value: str
+    new_password: str
+
+
+@router.post("/recover", response_model=CurrentUser)
+def recover(payload: RecoverIn, request: Request, db: Session = Depends(get_db)) -> CurrentUser:
+    """找回密码：手机号/生日校验通过即重置并登录。"""
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=422, detail="密码至少 6 位")
+    user = recover_password(
+        db, payload.method, payload.value, payload.new_password
+    )
+    request.session["user_id"] = user.id
+    return CurrentUser(username=user.username)
 
 
 class SetupIn(BaseModel):
     username: str
     password: str
+    phone: str | None = None
+    birthday: str | None = None  # YYYY-MM-DD
 
 
 @router.post("/setup", response_model=CurrentUser)
@@ -53,7 +84,17 @@ def setup(payload: SetupIn, request: Request, db: Session = Depends(get_db)) -> 
         raise HTTPException(status_code=422, detail="用户名不能为空")
     if len(payload.password) < 6:
         raise HTTPException(status_code=422, detail="密码至少 6 位")
-    user = create_initial_user(db, username, payload.password)
+    from datetime import date as _date
+
+    birthday = None
+    if payload.birthday:
+        try:
+            birthday = _date.fromisoformat(payload.birthday)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="生日格式应为 YYYY-MM-DD")
+    user = create_initial_user(
+        db, username, payload.password, phone=payload.phone, birthday=birthday
+    )
     request.session["user_id"] = user.id
     return CurrentUser(username=user.username)
 

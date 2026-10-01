@@ -7,6 +7,7 @@ import DecisionBar from '../components/review/DecisionBar'
 import DiscussionCard from '../components/review/DiscussionCard'
 import RelationsPanel from '../components/review/RelationsPanel'
 import ReviewQueue from '../components/review/ReviewQueue'
+import ItemTitle from '../components/ItemTitle'
 import TranslatedText from '../components/TranslatedText'
 import { useLang } from '../i18n'
 
@@ -51,6 +52,7 @@ export default function ReviewPage() {
       const s = await api.startReviewSession(inspirationId)
       setSession(s)
       await restoreAnalysis(s.analysis ?? null, s.analysis_en ?? null)
+      await maybeRequestOpening(s)
     } catch (err) {
       setSession(null)
       setAnalysis(null)
@@ -83,17 +85,35 @@ export default function ReviewPage() {
     setRelated(fetched)
   }
 
+  // AI 首问：会话已有分析但还没有讨论消息时，请 AI 主动开问
+  async function maybeRequestOpening(s) {
+    if (!s?.analysis || (s.messages?.length ?? 0) > 0) return
+    try {
+      const opening = await api.postOpeningQuestion(s.id)
+      if (opening) {
+        setSession((cur) =>
+          cur && cur.id === s.id
+            ? { ...cur, messages: [...cur.messages, opening] }
+            : cur,
+        )
+      }
+    } catch {
+      // 首问失败静默：用户可自行发言开启讨论
+    }
+  }
+
   // 进入审议页时自动恢复未完成的会话（关窗重开保留现场）
   useEffect(() => {
     if (session) return
     api
       .getActiveSession()
-      .then((s) => {
+      .then(async (s) => {
         if (s) {
           setSession(s)
           setSearchParams({ inspiration: String(s.inspiration_id) })
           attemptedRef.current = s.inspiration_id
-          return restoreAnalysis(s.analysis ?? null, s.analysis_en ?? null)
+          await restoreAnalysis(s.analysis ?? null, s.analysis_en ?? null)
+          await maybeRequestOpening(s)
         }
       })
       .catch(() => {})
@@ -135,6 +155,17 @@ export default function ReviewPage() {
         }),
       )
       setRelated(fetched)
+      // 分析完成后刷新 AI 首问：用户未发言时，旧首问作废、按新分析重提
+      if (!session?.messages?.some((m) => m.role === 'user')) {
+        try {
+          const opening = await api.postOpeningQuestion(session.id, true)
+          if (opening) {
+            setSession((s) => ({ ...s, messages: [opening] }))
+          }
+        } catch {
+          // 首问失败不阻断分析展示，用户可自行发言开启讨论
+        }
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -169,7 +200,7 @@ export default function ReviewPage() {
     const template = t('decisionDone')[result.decision_type]
     setNotice(
       template
-        ? template.replaceAll('{id}', String(result.viewpoint_id ?? ''))
+        ? template.replaceAll('{id}', String(result.display_id ?? result.viewpoint_id ?? ''))
         : t('decisionSubmitted'),
     )
     // 保持 attemptedRef 为已审议灵感 id：防止清空会话的瞬间旧 URL 参数
@@ -234,10 +265,15 @@ export default function ReviewPage() {
                       })}
                     </span>
                   </div>
+                  <ItemTitle
+                    titleZh={session.inspiration.title_zh}
+                    titleEn={session.inspiration.title_en}
+                    id={session.inspiration.id}
+                  />
                   <p className="mt-2 whitespace-pre-wrap text-slate-800">
                     <TranslatedText
-                      contentZh={session.inspiration.content_zh ?? session.inspiration.content}
-                      contentEn={session.inspiration.content_en ?? session.inspiration.content}
+                      contentZh={session.inspiration.content_zh}
+                      contentEn={session.inspiration.content_en}
                       originalLang={session.inspiration.original_lang}
                     />
                   </p>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api'
+import ItemTitle from '../ItemTitle'
 import TranslatedText from '../TranslatedText'
 import { useLang } from '../../i18n'
 import {
@@ -217,7 +218,9 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
     <div className="fixed inset-0 z-10 overflow-y-auto bg-slate-900/30 p-4">
       <div className="mx-auto my-8 max-w-3xl rounded-lg bg-white p-6 shadow-xl">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-sm text-slate-400">#{viewpointId}</span>
+          <span className="font-mono text-sm text-slate-400">
+            #{viewpoint?.source_inspiration_id ?? viewpointId}
+          </span>
           {viewpoint && (
             <>
               <span className="text-sm text-slate-500">
@@ -250,10 +253,15 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
           <p className="mt-6 text-sm text-slate-400">{t('loading')}</p>
         ) : (
           <>
+            <ItemTitle
+              titleZh={viewpoint.title_zh}
+              titleEn={viewpoint.title_en}
+              id={viewpoint.id}
+            />
             <p className="mt-4 whitespace-pre-wrap text-slate-800">
               <TranslatedText
-                contentZh={viewpoint.content_zh ?? viewpoint.content}
-                contentEn={viewpoint.content_en ?? viewpoint.content}
+                contentZh={viewpoint.content_zh}
+                contentEn={viewpoint.content_en}
                 originalLang={viewpoint.original_lang}
                 className="whitespace-pre-wrap"
               />
@@ -272,10 +280,15 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                   <span className="font-mono text-xs text-slate-400">
                     #{inspiration.id}
                   </span>
+                  <ItemTitle
+                    titleZh={inspiration.title_zh}
+                    titleEn={inspiration.title_en}
+                    id={inspiration.id}
+                  />
                   <p className="mt-1 whitespace-pre-wrap text-slate-600">
                     <TranslatedText
-                      contentZh={inspiration.content_zh ?? inspiration.content}
-                      contentEn={inspiration.content_en ?? inspiration.content}
+                      contentZh={inspiration.content_zh}
+                      contentEn={inspiration.content_en}
                       originalLang={inspiration.original_lang}
                     />
                   </p>
@@ -550,8 +563,8 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                             </p>
                             <p className="whitespace-pre-wrap">
                               <TranslatedText
-                                contentZh={msg.content_zh ?? msg.content}
-                                contentEn={msg.content_en ?? msg.content}
+                                contentZh={msg.content_zh}
+                                contentEn={msg.content_en}
                                 originalLang={msg.original_lang}
                               />
                             </p>

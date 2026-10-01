@@ -1,6 +1,6 @@
 """灵感 CRUD：录入即入队（status=pending），id 即编号；docx 导入（TASK-018）。"""
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,14 +13,16 @@ from ..ai import (
 )
 from ..auth import require_user
 from ..db import get_db
+from ..errors import biz_error
 from ..domain.translation import make_bilingual
+from ..domain.titles import complete_title, make_titles
 from ..domain.docx_import import (
     DocxImportError,
     default_year_from_filename,
     extract_docx_text,
     split_document,
 )
-from ..models import Inspiration, User
+from ..models import Inspiration, User, Viewpoint
 from ..schemas import (
     ImportConfirmRequest,
     ImportPreviewItem,
@@ -30,6 +32,7 @@ from ..schemas import (
     InspirationOut,
     InspirationStatus,
     InspirationUpdate,
+    RenameTitleRequest,
 )
 
 # 上传 docx 大小上限
@@ -62,12 +65,14 @@ async def create_inspiration(
     db: Session = Depends(get_db),
 ) -> Inspiration:
     bilingual = await make_bilingual(db, payload.content)
+    titles = await make_titles(db, payload.content)
     inspiration = Inspiration(
         content=payload.content,
         source_date=payload.source_date,
         source_type=payload.source_type,
         status="pending",
         **bilingual,
+        **titles,
     )
     db.add(inspiration)
     db.commit()
@@ -78,7 +83,7 @@ async def create_inspiration(
 def _get_or_404(inspiration_id: int, db: Session) -> Inspiration:
     inspiration = db.get(Inspiration, inspiration_id)
     if inspiration is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="灵感不存在")
+        raise biz_error(404, "inspiration_not_found", "灵感不存在", "Inspiration not found")
     return inspiration
 
 
@@ -125,7 +130,7 @@ async def import_docx_preview(
     if not filename.lower().endswith(".docx"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="仅支持 .docx 文件",
+            detail={"code": "docx_only", "zh": "仅支持 .docx 文件", "en": "Only .docx files are supported"},
         )
     data = await file.read()
     if not data or len(data) > MAX_DOCX_BYTES:
@@ -170,6 +175,7 @@ async def confirm_import(
     inspirations = []
     for item in payload.items:
         bilingual = await make_bilingual(db, item.content)
+        titles = await make_titles(db, item.content)
         inspirations.append(
             Inspiration(
                 content=item.content,
@@ -177,6 +183,7 @@ async def confirm_import(
                 source_type="docx_import",
                 status="pending",
                 **bilingual,
+                **titles,
             )
         )
     db.add_all(inspirations)
@@ -184,3 +191,43 @@ async def confirm_import(
     for inspiration in inspirations:
         db.refresh(inspiration)
     return inspirations
+
+
+@router.post("/{inspiration_id}/rename-title", response_model=InspirationOut)
+async def rename_title(
+    inspiration_id: int, payload: RenameTitleRequest, db: Session = Depends(get_db)
+) -> Inspiration:
+    """用户以一种语言重命名标题，另一种语言由大模型补齐；派生观点的标题同步更新。"""
+    inspiration = db.get(Inspiration, inspiration_id)
+    if inspiration is None:
+        raise biz_error(404, "inspiration_not_found", "灵感不存在", "Inspiration not found")
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="标题不能为空")
+    if payload.lang not in ("zh", "en"):
+        raise HTTPException(status_code=422, detail="lang 必须是 zh 或 en")
+    # 只写用户指定的语种；另一语种仅当为空时才由 AI 补齐，不覆盖已有标题
+    existing_other = (
+        inspiration.title_en if payload.lang == "zh" else inspiration.title_zh
+    )
+    if existing_other:
+        titles = {
+            "title_zh": title if payload.lang == "zh" else existing_other,
+            "title_en": title if payload.lang == "en" else existing_other,
+        }
+    else:
+        titles = await complete_title(db, title, payload.lang)
+    inspiration.title_zh = titles["title_zh"]
+    inspiration.title_en = titles["title_en"]
+    # 派生观点同步：同样只写用户语种，另一语种仅补空
+    for vp in db.scalars(
+        select(Viewpoint).where(Viewpoint.source_inspiration_id == inspiration.id)
+    ):
+        vp_existing_other = (
+            vp.title_en if payload.lang == "zh" else vp.title_zh
+        )
+        vp.title_zh = titles["title_zh"] if payload.lang == "zh" else (vp_existing_other or titles["title_zh"])
+        vp.title_en = titles["title_en"] if payload.lang == "en" else (vp_existing_other or titles["title_en"])
+    db.commit()
+    db.refresh(inspiration)
+    return inspiration
