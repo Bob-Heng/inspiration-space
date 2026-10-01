@@ -13,6 +13,9 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(50), unique=True)
     password_hash: Mapped[str] = mapped_column(String(256))
+    # 找回密码用（可选，仅本地保存）
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    birthday: Mapped[date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
 
 
@@ -30,6 +33,8 @@ class Inspiration(Base):
     content_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_lang: Mapped[str] = mapped_column(String(2), default="zh")
+    title_zh: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    title_en: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, server_default=func.now(), onupdate=func.now()
@@ -57,6 +62,8 @@ class Viewpoint(Base):
     content_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_lang: Mapped[str] = mapped_column(String(2), default="zh")
+    title_zh: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    title_en: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, server_default=func.now(), onupdate=func.now()

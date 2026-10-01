@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import ItemTitle from './ItemTitle'
 import TranslatedText from './TranslatedText'
 import { useLang } from '../i18n'
 import { statusLabel } from '../vocab'
@@ -25,6 +26,11 @@ export default function InspirationPanel() {
   const [confirming, setConfirming] = useState(false)
   // 预览项：{ content, source_date, selected }
   const [preview, setPreview] = useState(null)
+  const [renameTarget, setRenameTarget] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameLang, setRenameLang] = useState('zh')
+  const [renameSubmitting, setRenameSubmitting] = useState(false)
+  const [renameError, setRenameError] = useState(null)
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +134,33 @@ export default function InspirationPanel() {
       await load()
     } catch (err) {
       setError(err.message)
+    }
+  }
+
+  function openRename(item) {
+    setRenameTarget(item)
+    setRenameValue(
+      lang === 'en'
+        ? (item.title_en ?? item.title_zh ?? '')
+        : (item.title_zh ?? item.title_en ?? ''),
+    )
+    setRenameLang(lang)
+    setRenameError(null)
+  }
+
+  async function handleRenameSubmit(e) {
+    e.preventDefault()
+    if (!renameTarget || !renameValue.trim()) return
+    setRenameSubmitting(true)
+    setRenameError(null)
+    try {
+      await api.renameTitle(renameTarget.id, renameValue.trim(), renameLang)
+      setRenameTarget(null)
+      await load()
+    } catch (err) {
+      setRenameError(err.message)
+    } finally {
+      setRenameSubmitting(false)
     }
   }
 
@@ -299,10 +332,11 @@ export default function InspirationPanel() {
                   #{item.id}
                 </span>
                 <div className="min-w-0 flex-1">
+                  <ItemTitle titleZh={item.title_zh} titleEn={item.title_en} id={item.id} />
                   <p className="text-slate-800">
                     <TranslatedText
-                      contentZh={item.content_zh ?? item.content}
-                      contentEn={item.content_en ?? item.content}
+                      contentZh={item.content_zh}
+                      contentEn={item.content_en}
                       originalLang={item.original_lang}
                       clamp
                     />
@@ -312,7 +346,7 @@ export default function InspirationPanel() {
                     {statusLabel(item.status, lang)}
                   </p>
                 </div>
-                <div className="flex shrink-0 gap-2">
+                <div className="flex shrink-0 flex-col items-end gap-2">
                   {(item.status === 'pending' || item.status === 'in_review') && (
                     <button
                       className="text-sm text-slate-800 hover:underline"
@@ -331,6 +365,12 @@ export default function InspirationPanel() {
                     {t('edit')}
                   </button>
                   <button
+                    className="text-sm text-slate-500 hover:text-slate-800"
+                    onClick={() => openRename(item)}
+                  >
+                    {t('rename')}
+                  </button>
+                  <button
                     className="text-sm text-red-500 hover:text-red-700"
                     onClick={() => handleDelete(item.id)}
                   >
@@ -347,6 +387,61 @@ export default function InspirationPanel() {
           </li>
         )}
       </ul>
+
+      {renameTarget && (
+        <div className="fixed inset-0 z-10 flex items-center justify-center bg-slate-900/30 p-4">
+          <form
+            className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl"
+            onSubmit={handleRenameSubmit}
+          >
+            <h3 className="text-sm font-bold text-slate-800">{t('renameDialogTitle')}</h3>
+            <input
+              className="mt-3 w-full rounded border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              placeholder={t('renamePlaceholder')}
+              autoFocus
+            />
+            <div className="mt-3 flex items-center gap-4 text-sm text-slate-600">
+              <span className="text-xs text-slate-500">{t('renameLangLabel')}</span>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  checked={renameLang === 'zh'}
+                  onChange={() => setRenameLang('zh')}
+                />
+                中文
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  checked={renameLang === 'en'}
+                  onChange={() => setRenameLang('en')}
+                />
+                English
+              </label>
+            </div>
+            {renameError && <p className="mt-2 text-sm text-red-600">{renameError}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded border border-slate-300 px-3 py-1.5 text-sm"
+                onClick={() => setRenameTarget(null)}
+                disabled={renameSubmitting}
+              >
+                {t('cancel')}
+              </button>
+              <button
+                type="submit"
+                className="rounded bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+                disabled={renameSubmitting || !renameValue.trim()}
+              >
+                {renameSubmitting ? t('renaming') : t('confirm')}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }

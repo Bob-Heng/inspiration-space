@@ -81,8 +81,8 @@ export default function DiscussionCard({ session, sending, onSend }) {
               </div>
               <p className="whitespace-pre-wrap">
                 <TranslatedText
-                  contentZh={msg.content_zh ?? msg.content}
-                  contentEn={msg.content_en ?? msg.content}
+                  contentZh={msg.content_zh}
+                  contentEn={msg.content_en}
                   originalLang={msg.original_lang}
                 />
               </p>
@@ -95,7 +95,7 @@ export default function DiscussionCard({ session, sending, onSend }) {
       <form onSubmit={handleSubmit} className="mt-3 flex gap-2">
         <textarea
           className="flex-1 rounded border border-slate-300 p-2 text-sm outline-none focus:border-slate-500 disabled:bg-slate-50"
-          rows={2}
+          rows={5}
           placeholder={active ? t('inputPlaceholder') : t('sessionClosed')}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

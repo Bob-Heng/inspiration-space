@@ -108,7 +108,14 @@ def main() -> None:
             time.sleep(0.1)
 
     threading.Thread(target=_set_window_icon, daemon=True).start()
-    webview.create_window("灵感空间", f"http://{HOST}:{PORT}", width=1280, height=860)
+    # 窗口尺寸按屏幕自适应：不超过屏幕可用区域（给任务栏留边距）
+    screen_w = ctypes.windll.user32.GetSystemMetrics(0)   # SM_CXSCREEN
+    screen_h = ctypes.windll.user32.GetSystemMetrics(1)   # SM_CYSCREEN
+    win_w = min(1500, int(screen_w * 0.92))
+    win_h = min(950, int(screen_h * 0.86))
+    webview.create_window(
+        "灵感空间", f"http://{HOST}:{PORT}", width=win_w, height=win_h
+    )
     webview.start()
     logging.info("窗口已关闭，进程退出")
     os._exit(0)  # 不让 daemon 线程（uvicorn）拖住进程

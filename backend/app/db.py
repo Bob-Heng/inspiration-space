@@ -56,6 +56,17 @@ def ensure_schema_upgrades() -> None:
                         f"UPDATE {table} SET content_zh=content, content_en=content, original_lang='zh'"
                     )
                 )
+            if "title_zh" not in tcols and table in ("inspirations", "viewpoints"):
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN title_zh VARCHAR(100)")
+                )
+                conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN title_en VARCHAR(100)")
+                )
+        ucols = {c["name"] for c in insp.get_columns("users")}
+        if "phone" not in ucols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR(30)"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN birthday DATE"))
         tables = set(insp.get_table_names())
         for legacy in ("content_translations", "viewpoint_translations", "content_i18n"):
             if legacy in tables:

@@ -39,17 +39,49 @@ def has_any_user(db: Session) -> bool:
     return db.scalar(select(User.id).limit(1)) is not None
 
 
-def create_initial_user(db: Session, username: str, password: str) -> User:
-    """首次启动初始化：仅当 users 表为空时允许创建，创建后表即关闭初始化通道。"""
+def create_initial_user(
+    db: Session,
+    username: str,
+    password: str,
+    phone: str | None = None,
+    birthday=None,
+) -> User:
+    """首次启动初始化：仅当 users 表为空时允许创建，创建后表即关闭初始化通道。
+    phone/birthday 可选，仅本地保存，用于找回密码。"""
     if has_any_user(db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="账号已初始化，不能重复创建",
+            detail={"code": "already_initialized", "zh": "账号已初始化，不能重复创建", "en": "Account already initialized"},
         )
-    user = User(username=username, password_hash=hash_password(password))
+    user = User(
+        username=username,
+        password_hash=hash_password(password),
+        phone=phone or None,
+        birthday=birthday,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
+    return user
+
+
+def recover_password(db: Session, method: str, value: str, new_password: str) -> User:
+    """通过注册时留下的手机号/生日找回：校验通过即重置密码（一次机会）。"""
+    user = db.scalar(select(User).limit(1))
+    if user is None:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    if method == "phone":
+        stored = user.phone
+    elif method == "birthday":
+        stored = str(user.birthday) if user.birthday else None
+    else:
+        raise HTTPException(status_code=422, detail="非法找回方式")
+    if not stored:
+        raise HTTPException(status_code=403, detail={"code": "recovery_not_available", "zh": "注册时未提供该信息，无法以此找回", "en": "This recovery method was not set up"})
+    if stored != value.strip():
+        raise HTTPException(status_code=401, detail={"code": "recovery_mismatch", "zh": "信息不正确", "en": "Incorrect information"})
+    user.password_hash = hash_password(new_password)
+    db.commit()
     return user
 
 

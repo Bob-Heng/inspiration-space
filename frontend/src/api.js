@@ -21,7 +21,13 @@ async function request(path, options = {}) {
   if (res.status === 204) return null
   const data = await res.json().catch(() => null)
   if (!res.ok) {
-    throw new ApiError(res.status, data?.detail ?? `请求失败（${res.status}）`)
+    let detail = data?.detail
+    // 双语错误：detail 为 { code, zh, en } 时按界面语言取值（api.js 不在组件树，直读 localStorage）
+    if (detail && typeof detail === 'object') {
+      const lang = localStorage.getItem('inspiration_lang') || 'zh'
+      detail = detail[lang] ?? detail.zh
+    }
+    throw new ApiError(res.status, detail ?? `请求失败（${res.status}）`)
   }
   return data
 }
@@ -38,11 +44,23 @@ export const api = {
   logout: () => request('/api/auth/logout', { method: 'POST' }),
   me: () => request('/api/auth/me'),
   authStatus: () => request('/api/auth/status'),
-  setup(username, password) {
+  setup(username, password, phone, birthday) {
     return request('/api/auth/setup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({
+        username,
+        password,
+        phone: phone || null,
+        birthday: birthday || null,
+      }),
+    })
+  },
+  recover(method, value, newPassword) {
+    return request('/api/auth/recover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method, value, new_password: newPassword }),
     })
   },
 
@@ -68,6 +86,13 @@ export const api = {
     })
   },
   deleteInspiration: (id) => request(`/api/inspirations/${id}`, { method: 'DELETE' }),
+  renameTitle(id, title, lang) {
+    return request(`/api/inspirations/${id}/rename-title`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, lang }),
+    })
+  },
 
   importDocxPreview(file) {
     const form = new FormData()
@@ -85,6 +110,10 @@ export const api = {
   analyzeInspiration: (id) =>
     request(`/api/inspirations/${id}/analysis`, { method: 'POST' }),
 
+  postOpeningQuestion(sessionId, regenerate = false) {
+    const qs = regenerate ? '?regenerate=true' : ''
+    return request(`/api/review/sessions/${sessionId}/opening${qs}`, { method: 'POST' })
+  },
   startReviewSession(inspirationId) {
     return request('/api/review/sessions', {
       method: 'POST',
@@ -159,6 +188,8 @@ export const api = {
   getInspiration: (id) => request(`/api/inspirations/${id}`),
 
   getLlmSettings: () => request('/api/settings/llm'),
+  getAiStatus: () => request('/api/ai/status'),
+  reconcileAi: () => request('/api/ai/reconcile', { method: 'POST' }),
   saveLlmSettings: (payload) =>
     request('/api/settings/llm', {
       method: 'PUT',

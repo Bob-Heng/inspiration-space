@@ -19,6 +19,7 @@ from ..ai.prompts.analysis import PROMPT_VERSION, build_analysis_messages
 from ..ai.schemas import AnalysisResult
 from ..auth import require_user
 from ..db import get_db
+from ..errors import biz_error
 from ..domain.analysis import validate_analysis_result
 from ..domain.translation import bilingual_analysis
 from ..models import Inspiration, ReviewSession, Viewpoint
@@ -52,12 +53,14 @@ async def analyze_inspiration(
             validate_business=lambda r: validate_analysis_result(r, existing_ids),
         )
     except (LLMUnavailableError, LLMConfigError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        raise biz_error(
+            503, "ai_unavailable", str(exc),
+            "AI service is unavailable. Please check the AI service settings.",
         ) from exc
     except LLMOutputError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+        raise biz_error(
+            502, "ai_bad_output", str(exc),
+            "The AI returned output that failed validation. Please retry.",
         ) from exc
     # 分析结果持久化到该灵感的 active 会话，关窗重开后随会话恢复
     active_session = db.scalar(

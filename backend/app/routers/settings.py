@@ -81,13 +81,13 @@ def save_llm_settings(payload: LlmSettingsIn, db: Session = Depends(get_db)) -> 
     if payload.provider_key not in PRESETS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"未知的服务商：{payload.provider_key}",
+            detail={"code": "unknown_provider", "zh": f"未知的服务商：{payload.provider_key}", "en": f"Unknown provider: {payload.provider_key}"},
         )
     base_url = payload.base_url or PRESETS[payload.provider_key]["base_url"]
     if not base_url:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="自定义服务商必须填写 Base URL",
+            detail={"code": "base_url_required", "zh": "自定义服务商必须填写 Base URL", "en": "Base URL is required for a custom provider"},
         )
     row = db.get(LlmSetting, SETTINGS_ROW_ID)
     if row is None:
@@ -118,7 +118,7 @@ async def test_llm_settings(payload: LlmTestIn, db: Session = Depends(get_db)) -
     if not base_url or not api_key:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="缺少 Base URL 或 API Key，无法测试",
+            detail={"code": "missing_credentials", "zh": "缺少 Base URL 或 API Key，无法测试", "en": "Base URL or API Key is missing"},
         )
     client = AsyncOpenAI(
         base_url=base_url,

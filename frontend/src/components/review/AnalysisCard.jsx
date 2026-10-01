@@ -89,17 +89,6 @@ export default function AnalysisCard({ analysis, loading, onAnalyze }) {
               <p>{t('none')}</p>
             )}
           </Section>
-          <Section title={t('firstQuestions')}>
-            {analysis.questions?.length ? (
-              <ol className="list-decimal space-y-1 pl-5">
-                {analysis.questions.map((q, i) => (
-                  <li key={i}>{q}</li>
-                ))}
-              </ol>
-            ) : (
-              <p>{t('none')}</p>
-            )}
-          </Section>
         </div>
       )}
     </div>

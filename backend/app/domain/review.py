@@ -177,6 +177,8 @@ def apply_review_decision(
         viewpoint = Viewpoint(
             type="raw",
             content=content,
+            title_zh=inspiration.title_zh,
+            title_en=inspiration.title_en,
             **(bilingual or {}),
             source_inspiration_id=inspiration.id,
             source_date=inspiration.source_date,

@@ -28,6 +28,8 @@ class InspirationOut(BaseModel):
     content_zh: str | None = None
     content_en: str | None = None
     original_lang: str = 'zh'
+    title_zh: str | None = None
+    title_en: str | None = None
     source_date: date | None
     source_type: str
     status: str
@@ -117,12 +119,14 @@ class DecisionRequest(BaseModel):
     layer: str | None = None
     tags: AnalysisTags | None = None
     relations: list[AnalysisRelation] = []
+    regenerate_title: bool = False  # 采纳后用最终正文重新生成双语标题
 
 
 class DecisionOut(BaseModel):
     decision_id: int | None
     decision_type: str
     viewpoint_id: int | None
+    display_id: int | None = None  # 统一显示编号（来源灵感 id）
     session_status: str
     inspiration_status: str
 
@@ -134,6 +138,8 @@ class ViewpointOut(BaseModel):
     content_zh: str | None = None
     content_en: str | None = None
     original_lang: str = 'zh'
+    title_zh: str | None = None
+    title_en: str | None = None
     source_inspiration_id: int | None
     source_date: date | None
     layer: str | None
@@ -214,3 +220,8 @@ class ClassifiedOut(BaseModel):
     dao: list[ViewpointOut]
     fa: list[ViewpointOut]
     shu: list[ViewpointOut]
+
+
+class RenameTitleRequest(BaseModel):
+    title: str
+    lang: str  # zh | en

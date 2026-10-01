@@ -124,7 +124,7 @@ class TestSplitDocument:
         assert items[2].source_date is None
         calls = list(db_session.scalars(select(AiCall)))
         assert len(calls) == 1
-        assert calls[0].prompt_version == "docx_split.v1"
+        assert calls[0].prompt_version == "docx_split.v2"
         assert calls[0].provider == "fake"
 
     def test_正文过长被拒绝(self, db_session):

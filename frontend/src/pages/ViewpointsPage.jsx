@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { api } from '../api'
 import ClassifiedView from '../components/viewpoints/ClassifiedView'
+import ItemTitle from '../components/ItemTitle'
 import PageHeader from '../components/PageHeader'
 import TranslatedText from '../components/TranslatedText'
 import ViewpointDetail from '../components/viewpoints/ViewpointDetail'
@@ -255,12 +255,13 @@ const EXPORT_BASE = import.meta.env.DEV ? 'http://localhost:8000' : ''
                     className="border-b border-slate-100 align-top hover:bg-slate-50"
                   >
                     <td className="px-3 py-2 font-mono text-xs text-slate-400">
-                      #{item.id}
+                      #{item.source_inspiration_id ?? item.id}
                     </td>
                     <td className="max-w-md px-3 py-2 text-slate-800">
+                      <ItemTitle titleZh={item.title_zh} titleEn={item.title_en} id={item.id} />
                       <TranslatedText
-                        contentZh={item.content_zh ?? item.content}
-                        contentEn={item.content_en ?? item.content}
+                        contentZh={item.content_zh}
+                        contentEn={item.content_en}
                         originalLang={item.original_lang}
                         clamp
                       />
@@ -303,14 +304,15 @@ const EXPORT_BASE = import.meta.env.DEV ? 'http://localhost:8000' : ''
             {items.map((item) => (
               <li key={item.id} className="rounded-lg bg-white p-4 shadow">
                 <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <span className="font-mono text-slate-400">#{item.id}</span>
+                  <span className="font-mono text-slate-400">#{item.source_inspiration_id ?? item.id}</span>
                   <span>{layerLabel(item.layer, lang) ?? t('unlayered')}</span>
                   <StatusBadge status={item.status} />
                 </div>
+                <ItemTitle titleZh={item.title_zh} titleEn={item.title_en} id={item.id} />
                 <p className="mt-2 text-slate-800">
                   <TranslatedText
-                    contentZh={item.content_zh ?? item.content}
-                    contentEn={item.content_en ?? item.content}
+                    contentZh={item.content_zh}
+                    contentEn={item.content_en}
                     originalLang={item.original_lang}
                     clamp
                   />

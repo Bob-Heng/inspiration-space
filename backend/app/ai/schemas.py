@@ -25,14 +25,13 @@ class AnalysisRelation(BaseModel):
 
 class AnalysisResult(BaseModel):
     """审议分析输出：三项分析（采纳理由+最强反对理由 / 分层+四标签建议 / 相近冲突关系）
-    缺一不可，外加第一轮疑问。"""
+    缺一不可。疑问不在分析中预设——由讨论中的 AI 现场提问。"""
 
     adoption_reason: NonEmptyStr
     strongest_counterargument: NonEmptyStr
     layer: str  # 道 / 法 / 术，业务校验把关
     tags: AnalysisTags
     relations: list[AnalysisRelation]
-    questions: list[NonEmptyStr] = Field(min_length=1)
 
 
 class DocxSplitItem(BaseModel):

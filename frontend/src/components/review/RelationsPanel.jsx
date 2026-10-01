@@ -1,4 +1,5 @@
 import { useLang } from '../../i18n'
+import ItemTitle from '../ItemTitle'
 import TranslatedText from '../TranslatedText'
 import {
   layerLabel,
@@ -38,15 +39,20 @@ export default function RelationsPanel({ analysis, related }) {
                     {relationLabel(relation.type, lang)}
                   </span>
                   <span className="font-mono text-xs text-slate-400">
-                    #{relation.viewpoint_id}
+                    #{viewpoint?.source_inspiration_id ?? relation.viewpoint_id}
                   </span>
                 </div>
                 {viewpoint ? (
                   <>
+                    <ItemTitle
+                      titleZh={viewpoint.title_zh}
+                      titleEn={viewpoint.title_en}
+                      id={viewpoint.id}
+                    />
                     <p className="mt-1 text-slate-800">
                       <TranslatedText
-                        contentZh={viewpoint.content_zh ?? viewpoint.content}
-                        contentEn={viewpoint.content_en ?? viewpoint.content}
+                        contentZh={viewpoint.content_zh}
+                        contentEn={viewpoint.content_en}
                         originalLang={viewpoint.original_lang}
                         clamp
                       />

@@ -30,13 +30,14 @@ async def make_bilingual(
 ) -> dict:
     """接收内容时生成 {content_zh, content_en, original_lang}。
 
-    LLM 不可用时镜像原文到两个版本（不阻塞主流程），可事后由补译脚本回填。
+    LLM 不可用时不镜像原文冒充译文：缺失版本置 None，由启动对账或重试补齐，
+    前端显示「暂无法翻译，等待大模型接入……」。
     """
     lang = original_lang or detect_lang(text)
     other = "en" if lang == "zh" else "zh"
     result = {
-        "content_zh": text,
-        "content_en": text,
+        "content_zh": text if lang == "zh" else None,
+        "content_en": text if lang == "en" else None,
         "original_lang": lang,
     }
     try:
@@ -46,7 +47,7 @@ async def make_bilingual(
         ).strip()
         result[f"content_{other}"] = translated
     except LLMError as exc:
-        logger.warning("写入时翻译失败（镜像原文，待补译）：%s", exc)
+        logger.warning("写入时翻译失败（缺失版本置空，待对账补齐）：%s", exc)
     return result
 
 
@@ -60,11 +61,6 @@ async def bilingual_analysis(db: Session, analysis_json: str) -> str | None:
                 out[field] = (await make_bilingual(db, data[field], "zh"))[
                     "content_en"
                 ]
-        if data.get("questions"):
-            out["questions"] = [
-                (await make_bilingual(db, q, "zh"))["content_en"]
-                for q in data["questions"]
-            ]
     except Exception:
         logger.exception("分析英译失败")
         return None

@@ -1,5 +1,6 @@
 import { useLang } from '../../i18n'
 import { statusLabel } from '../../vocab'
+import ItemTitle from '../ItemTitle'
 import TranslatedText from '../TranslatedText'
 
 export default function ReviewQueue({ items, selectedId, onSelect, error }) {
@@ -26,10 +27,11 @@ export default function ReviewQueue({ items, selectedId, onSelect, error }) {
                   {statusLabel(item.status, lang)}
                 </span>
               </div>
+              <ItemTitle titleZh={item.title_zh} titleEn={item.title_en} id={item.id} />
               <p className="mt-1 text-slate-800">
                 <TranslatedText
-                  contentZh={item.content_zh ?? item.content}
-                  contentEn={item.content_en ?? item.content}
+                  contentZh={item.content_zh}
+                  contentEn={item.content_en}
                   originalLang={item.original_lang}
                   clamp
                 />
