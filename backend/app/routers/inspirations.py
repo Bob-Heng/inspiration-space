@@ -15,6 +15,7 @@ from ..auth import require_user
 from ..db import get_db
 from ..errors import biz_error
 from ..domain.translation import make_bilingual
+from ..domain.inspirations import cascade_delete_inspiration, next_inspiration_id
 from ..domain.titles import complete_title, make_titles
 from ..domain.docx_import import (
     DocxImportError,
@@ -67,6 +68,7 @@ async def create_inspiration(
     bilingual = await make_bilingual(db, payload.content)
     titles = await make_titles(db, payload.content)
     inspiration = Inspiration(
+        id=next_inspiration_id(db),
         content=payload.content,
         source_date=payload.source_date,
         source_type=payload.source_type,
@@ -106,12 +108,10 @@ def update_inspiration(
     return inspiration
 
 
-@router.delete("/{inspiration_id}", response_model=InspirationDeleted)
-def delete_inspiration(inspiration_id: int, db: Session = Depends(get_db)) -> InspirationDeleted:
+@router.delete("/{inspiration_id}")
+def delete_inspiration(inspiration_id: int, db: Session = Depends(get_db)) -> dict:
     inspiration = _get_or_404(inspiration_id, db)
-    db.delete(inspiration)
-    db.commit()
-    return InspirationDeleted(deleted_id=inspiration_id)
+    return cascade_delete_inspiration(db, inspiration)
 
 
 @router.post("/import", response_model=ImportPreviewOut)
@@ -178,6 +178,7 @@ async def confirm_import(
         titles = await make_titles(db, item.content)
         inspirations.append(
             Inspiration(
+                id=next_inspiration_id(db),
                 content=item.content,
                 source_date=item.source_date,
                 source_type="docx_import",
