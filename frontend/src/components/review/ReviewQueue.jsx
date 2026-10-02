@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useLang } from '../../i18n'
 import { statusLabel } from '../../vocab'
 import ItemTitle from '../ItemTitle'
@@ -5,6 +6,24 @@ import TranslatedText from '../TranslatedText'
 
 export default function ReviewQueue({ items, selectedId, onSelect, error }) {
   const { t, tf, lang } = useLang()
+  const itemRefs = useRef(new Map())
+
+  // 打开审议（含从首页跳转）时，队列自动滚动到选中的灵感。
+  // 布局稳定需要一帧以上，渲染后再延时重试一次。
+  useEffect(() => {
+    if (selectedId == null) return
+    const scroll = () => {
+      const el = itemRefs.current.get(selectedId)
+      if (el) el.scrollIntoView({ block: 'nearest' })
+    }
+    const raf = requestAnimationFrame(scroll)
+    const timer = setTimeout(scroll, 300)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+    }
+  }, [selectedId, items.length])
+
   return (
     <div className="rounded-lg bg-white p-4 shadow">
       <h2 className="text-sm font-bold text-slate-800">{t('queue')}</h2>
@@ -12,7 +31,13 @@ export default function ReviewQueue({ items, selectedId, onSelect, error }) {
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <ul className="mt-3 space-y-2">
         {items.map((item) => (
-          <li key={item.id}>
+          <li
+            key={item.id}
+            ref={(el) => {
+              if (el) itemRefs.current.set(item.id, el)
+              else itemRefs.current.delete(item.id)
+            }}
+          >
             <button
               className={`w-full rounded border p-3 text-left text-sm ${
                 selectedId === item.id

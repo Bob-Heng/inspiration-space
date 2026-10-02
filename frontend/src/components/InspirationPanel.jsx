@@ -20,6 +20,7 @@ export default function InspirationPanel() {
   const [statusFilter, setStatusFilter] = useState('')
   const [error, setError] = useState(null)
   const [editingId, setEditingId] = useState(null)
+  const [deletingItem, setDeletingItem] = useState(null)
   const [editingContent, setEditingContent] = useState('')
   const fileInputRef = useRef(null)
   const [importing, setImporting] = useState(false)
@@ -49,6 +50,8 @@ export default function InspirationPanel() {
     load()
   }, [load])
 
+  const listEndRef = useRef(null)
+
   async function handleCreate(e) {
     e.preventDefault()
     if (!content.trim()) return
@@ -60,6 +63,10 @@ export default function InspirationPanel() {
       setContent('')
       setSourceDate('')
       await load()
+      // 录入后自动滚动到列表底部（新增灵感处）
+      requestAnimationFrame(() =>
+        listEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }),
+      )
     } catch (err) {
       setError(err.message)
     }
@@ -127,10 +134,12 @@ export default function InspirationPanel() {
     }
   }
 
-  async function handleDelete(id) {
-    if (!window.confirm(tf('deleteConfirm', { id }))) return
+  async function handleConfirmDelete() {
+    const item = deletingItem
+    if (!item) return
+    setDeletingItem(null)
     try {
-      await api.deleteInspiration(id)
+      await api.deleteInspiration(item.id)
       await load()
     } catch (err) {
       setError(err.message)
@@ -372,7 +381,7 @@ export default function InspirationPanel() {
                   </button>
                   <button
                     className="text-sm text-red-500 hover:text-red-700"
-                    onClick={() => handleDelete(item.id)}
+                    onClick={() => setDeletingItem(item)}
                   >
                     {t('delete')}
                   </button>
@@ -386,6 +395,7 @@ export default function InspirationPanel() {
             {t('queueEmpty')}
           </li>
         )}
+        <li ref={listEndRef} className="h-px list-none" aria-hidden />
       </ul>
 
       {renameTarget && (
@@ -440,6 +450,38 @@ export default function InspirationPanel() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {deletingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30">
+          <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl">
+            <h3 className="text-sm font-bold text-slate-800">
+              {deletingItem.status === 'pending'
+                ? tf('deleteConfirm', { id: deletingItem.id })
+                : t('deleteCascadeTitle')}
+            </h3>
+            {(deletingItem.status === 'in_review' ||
+              deletingItem.status === 'reviewed') && (
+              <p className="mt-2 text-sm text-slate-600">
+                {tf('deleteCascadeBody', { id: deletingItem.id })}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                className="rounded border border-slate-300 px-3 py-1.5 text-sm"
+                onClick={() => setDeletingItem(null)}
+              >
+                {t('cancel')}
+              </button>
+              <button
+                className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-500"
+                onClick={handleConfirmDelete}
+              >
+                {t('deleteAnyway')}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

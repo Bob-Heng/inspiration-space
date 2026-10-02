@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import InspirationPanel from '../components/InspirationPanel'
 import PageHeader from '../components/PageHeader'
+import ScrollElevator from '../components/ScrollElevator'
 import { LangSelect, useLang } from '../i18n'
 
 export default function HomePage() {
@@ -36,6 +37,7 @@ export default function HomePage() {
           <InspirationPanel />
         </div>
       </main>
+      <ScrollElevator />
     </div>
   )
 }

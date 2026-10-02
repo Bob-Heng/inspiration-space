@@ -55,6 +55,10 @@ export const STRINGS = {
     save: '保存',
     cancel: '取消',
     deleteConfirm: '确认删除灵感 #{id}？',
+    deleteCascadeTitle: '删除已进入审议的灵感',
+    deleteCascadeBody:
+      '灵感 #{id} 已进入审议流程：删除将同时清空其 AI 分析、讨论记录、派生观点及相关关系，且不可恢复。确认删除？',
+    deleteAnyway: '确认删除',
     importDocx: '导入 docx',
     importing: 'AI 拆解中…',
     importPreview: '导入预览：{name}（拆解出 {total} 条，勾选 {n} 条）',
@@ -356,6 +360,10 @@ export const STRINGS = {
     save: 'Save',
     cancel: 'Cancel',
     deleteConfirm: 'Delete inspiration #{id}?',
+    deleteCascadeTitle: 'Delete inspiration under review',
+    deleteCascadeBody:
+      'Inspiration #{id} is in the review flow: deleting it also removes its AI analysis, discussion, derived viewpoints, and relations. This cannot be undone.',
+    deleteAnyway: 'Delete permanently',
     importDocx: 'Import docx',
     importing: 'AI splitting…',
     importPreview: 'Import preview: {name} ({total} extracted, {n} selected)',

@@ -3,6 +3,7 @@ import { api } from '../api'
 import ClassifiedView from '../components/viewpoints/ClassifiedView'
 import ItemTitle from '../components/ItemTitle'
 import PageHeader from '../components/PageHeader'
+import ScrollElevator from '../components/ScrollElevator'
 import TranslatedText from '../components/TranslatedText'
 import ViewpointDetail from '../components/viewpoints/ViewpointDetail'
 import { useLang } from '../i18n'
@@ -345,6 +346,7 @@ const EXPORT_BASE = import.meta.env.DEV ? 'http://localhost:8000' : ''
           onChanged={load}
         />
       )}
+          <ScrollElevator />
     </div>
   )
 }

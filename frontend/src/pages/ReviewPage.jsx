@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
+import ScrollElevator from '../components/ScrollElevator'
 import { api } from '../api'
 import AnalysisCard from '../components/review/AnalysisCard'
 import DecisionBar from '../components/review/DecisionBar'
@@ -26,6 +27,7 @@ export default function ReviewPage() {
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
   const attemptedRef = useRef(null)
+  const queueAsideRef = useRef(null)
 
   const loadQueue = useCallback(async () => {
     try {
@@ -244,13 +246,19 @@ export default function ReviewPage() {
 
         {/* 三栏各自独立滚动：栏位固定，内容在栏内滚动，互不影响 */}
         <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-12 lg:overflow-hidden">
-          <aside className="min-h-0 lg:col-span-3 lg:h-full lg:overflow-y-auto lg:pr-1">
+          <aside
+            ref={queueAsideRef}
+            className="min-h-0 lg:col-span-3 lg:h-full lg:overflow-y-auto lg:pr-1"
+          >
             <ReviewQueue
               items={queue}
               selectedId={session?.inspiration_id ?? null}
               onSelect={handleSelect}
               error={queueError}
             />
+            <div className="sticky bottom-2 mt-2 flex justify-end">
+              <ScrollElevator target={queueAsideRef} inline />
+            </div>
           </aside>
 
           <section className="min-h-0 space-y-4 lg:col-span-6 lg:h-full lg:overflow-y-auto lg:pr-1">
@@ -301,6 +309,7 @@ export default function ReviewPage() {
           </aside>
         </div>
       </main>
+
 
       <DecisionBar
         key={session?.id ?? 'none'}
