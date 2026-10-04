@@ -1,6 +1,6 @@
 from datetime import datetime, date
 
-from sqlalchemy import Date, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, ForeignKey, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
@@ -20,7 +20,7 @@ class User(Base):
 
 
 class Inspiration(Base):
-    """灵感：待审队列条目。status: pending / in_review / reviewed / rejected"""
+    """灵感：原始录入条目。灵感自身无状态机，首页状态由关联观点推导。"""
 
     __tablename__ = "inspirations"
 
@@ -28,7 +28,6 @@ class Inspiration(Base):
     content: Mapped[str] = mapped_column(Text)
     source_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     source_type: Mapped[str] = mapped_column(String(20), default="manual")
-    status: Mapped[str] = mapped_column(String(20), default="pending")
     # 原生双语：content 为原文镜像；content_zh/content_en 为两个语言版本
     content_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_en: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -42,7 +41,7 @@ class Inspiration(Base):
 
 
 class Viewpoint(Base):
-    """观点：审议入库条目。status: accepted / suspended / rejected"""
+    """观点：系统核心条目。status: draft（他山坊打磨中，集思录隐藏）/ accepted（已采纳入库）"""
 
     __tablename__ = "viewpoints"
 
@@ -58,7 +57,9 @@ class Viewpoint(Base):
     circle: Mapped[str | None] = mapped_column(String(20), nullable=True)
     discipline: Mapped[str | None] = mapped_column(String(20), nullable=True)
     scene: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    status: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="draft")
+    # 观点判断结果（录入/编辑时 AI 前置判断）：NULL=未判断或判断失败，开会话时前端走 live 判断兜底
+    is_viewpoint: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     content_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_lang: Mapped[str] = mapped_column(String(2), default="zh")
@@ -82,36 +83,18 @@ class ViewpointRelation(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
 
 
-class ViewpointEvent(Base):
-    """观点写操作留痕（TASK-014）：合并/拆分/状态变更/冲突联动。
-
-    event_type: status_change / conflict_suspend / merge / split；
-    detail 为 JSON 字符串，记录事件相关的对方观点、原文等追溯信息。
-    """
-
-    __tablename__ = "viewpoint_events"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    viewpoint_id: Mapped[int] = mapped_column(ForeignKey("viewpoints.id"))
-    event_type: Mapped[str] = mapped_column(String(20))
-    from_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    to_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
-
-
 class ReviewSession(Base):
-    """审议会话。status: active / paused / completed"""
+    """打磨会话：围绕一条观点的打磨过程。status: active / paused / completed，
+    允许 completed -> active（集思录撤回重开）；phase: distill 提炼 / polish 打磨"""
 
     __tablename__ = "review_sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    inspiration_id: Mapped[int] = mapped_column(ForeignKey("inspirations.id"))
-    viewpoint_id: Mapped[int | None] = mapped_column(
-        ForeignKey("viewpoints.id"), nullable=True
-    )
+    # 本会话打磨的观点（主关联）
+    viewpoint_id: Mapped[int] = mapped_column(ForeignKey("viewpoints.id"))
     status: Mapped[str] = mapped_column(String(20), default="active")
+    # 两阶段：distill=提炼（现象收敛为观点）/ polish=打磨（分析+决策）
+    phase: Mapped[str] = mapped_column(String(10), default="distill")
     started_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
     # 最近一次 AI 审议分析结果（JSON），随会话持久化，关窗重开后恢复
@@ -121,7 +104,7 @@ class ReviewSession(Base):
 
 
 class ReviewMessage(Base):
-    """审议对话消息。role: user / assistant / system"""
+    """打磨对话消息。role: user / assistant / system；phase 为写入时会话所处阶段"""
 
     __tablename__ = "review_messages"
 
@@ -129,6 +112,7 @@ class ReviewMessage(Base):
     session_id: Mapped[int] = mapped_column(ForeignKey("review_sessions.id"))
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
+    phase: Mapped[str] = mapped_column(String(10), default="polish")
     content_zh: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_lang: Mapped[str] = mapped_column(String(2), default="zh")
@@ -136,7 +120,7 @@ class ReviewMessage(Base):
 
 
 class ReviewDecision(Base):
-    """审议决策。decision_type: accept / accept_modified / reject / defer"""
+    """打磨决策。decision_type 今后只有 accept（历史行可能还有 accept_modified / reject / defer）"""
 
     __tablename__ = "review_decisions"
 

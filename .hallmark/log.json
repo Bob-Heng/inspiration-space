@@ -1,0 +1,11 @@
+[
+  {
+    "date": "2026-10-02",
+    "scope": "app",
+    "macrostructure": "Workbench",
+    "theme": "custom (meteor: warm paper / starry blue / meteor gold)",
+    "theme_axes": "light / system-sans display / cool-warm dual accent",
+    "enrichment": "auth narrative sequence (card wall → blur fade → glow trace → shatter → starfield warp → home flatten)",
+    "brief": "灵感空间 v2 全站 UI 重设计，首站：登录页完整叙事序列"
+  }
+]

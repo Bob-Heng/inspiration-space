@@ -6,7 +6,7 @@ AI 只输出建议，裁决权在人类；分析结果只是建议，正式落�
 import json
 
 from ...domain.tags import LAYER_LABELS, TAG_VOCABULARIES
-from ...models import Inspiration, Viewpoint
+from ...models import Viewpoint
 from ..base import Message
 
 PROMPT_VERSION = "analysis.v3"
@@ -63,12 +63,15 @@ def _viewpoint_snapshot(viewpoints: list[Viewpoint]) -> str:
 
 
 def build_analysis_messages(
-    inspiration: Inspiration, viewpoints: list[Viewpoint]
+    viewpoint: Viewpoint, viewpoints: list[Viewpoint]
 ) -> list[Message]:
+    """组装分析上下文：待审条目正文（打磨对象观点）+ 观点库快照（调用方只收 accepted）。
+
+    输入对象为观点（duck-type .content）。"""
     user_prompt = f"""请审议以下灵感。
 
 灵感（待审条目）：
-{inspiration.content}
+{viewpoint.content}
 
 {_viewpoint_snapshot(viewpoints)}
 """

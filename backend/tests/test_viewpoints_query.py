@@ -42,7 +42,7 @@ def seeded(db_session):
             circle="公众",
             discipline="社会学",
             scene="商业创业",
-            status="suspended",
+            status="draft",
             source_date=date(2026, 5, 10),
         ),
         Viewpoint(
@@ -57,7 +57,7 @@ def seeded(db_session):
         ),
         Viewpoint(
             content="无分层无标签观点",
-            status="rejected",
+            status="draft",
             source_date=None,
         ),
     ]
@@ -119,7 +119,7 @@ class TestCombinedFilter:
         assert _ids(result) == [seeded[0].id]
 
     def test_组合无命中返回空(self, db_session, seeded):
-        result = query_viewpoints(db_session, layer="dao", status="rejected")
+        result = query_viewpoints(db_session, layer="dao", status="draft")
         assert result == []
 
     def test_无筛选返回全部按编号升序(self, db_session, seeded):

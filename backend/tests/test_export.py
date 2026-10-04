@@ -49,11 +49,6 @@ class TestFormatViewpointLine:
         )
         assert line == "7.[][][///]正文首段。"
 
-    def test_状态标记(self):
-        assert format_viewpoint_line(_vp(status="suspended")).endswith("【悬置】")
-        assert format_viewpoint_line(_vp(status="rejected")).endswith("【已否定】")
-        assert "【" not in format_viewpoint_line(_vp(status="accepted"))
-
     def test_跨段正文首行只取首段(self):
         line = format_viewpoint_line(_vp(content="首段。\n第二段。\n第三段。"))
         assert line.endswith("首段。")
@@ -63,13 +58,13 @@ class TestFormatViewpointLine:
 class TestBuildViewpointsDocx:
     def test_结构与续段还原(self):
         content = build_viewpoints_docx(
-            [_vp(content="首段。\n续段。"), _vp(id=8, status="suspended")]
+            [_vp(content="首段。\n续段。"), _vp(id=8)]
         )
         paragraphs = _read_paragraphs(content)
         assert paragraphs[0] == "原始观点"
         assert paragraphs[2] == "7.[5.2][法][经济//经济学/文旅消费]首段。"
         assert paragraphs[3] == "续段。"
-        assert paragraphs[4].startswith("8.[5.2][法][经济//经济学/文旅消费]正文首段。【悬置】")
+        assert paragraphs[4].startswith("8.[5.2][法][经济//经济学/文旅消费]正文首段。")
 
     def test_生成的docx可正常打开(self):
         content = build_viewpoints_docx([_vp()])
@@ -78,11 +73,11 @@ class TestBuildViewpointsDocx:
 
 
 class TestBuildClassifiedDocx:
-    def test_三节分组与悬置标记(self):
+    def test_三节分组(self):
         groups = {
             "dao": [_vp(id=1, layer="dao")],
             "fa": [],
-            "shu": [_vp(id=2, layer="shu", status="suspended")],
+            "shu": [_vp(id=2, layer="shu")],
         }
         paragraphs = _read_paragraphs(build_classified_docx(groups))
         assert paragraphs[0] == "分类观点"
@@ -90,6 +85,6 @@ class TestBuildClassifiedDocx:
         shu_at = paragraphs.index("术")
         assert dao_at < shu_at
         assert paragraphs[dao_at + 1].startswith("1.[5.2][道]")
-        assert paragraphs[shu_at + 1].endswith("【悬置】")
+        assert paragraphs[shu_at + 1].startswith("2.[5.2][术]")
         # 法节为空：法标题后紧邻术标题
         assert paragraphs[paragraphs.index("法") + 1] == "术"

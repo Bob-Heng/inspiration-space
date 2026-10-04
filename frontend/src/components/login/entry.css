@@ -1,0 +1,246 @@
+/* Hallmark · genre: playful · design-system: design.md · designed-as-app
+ * 登录序列 + 首页入场（叙事动效仅限 auth 流程；App 页面不用）
+ * 参数参考 MotionVault：blur-fade-in / glow-border-card / marquee-3d /
+ * wobble-input / starfield / tilt-3d */
+
+/* ---------- 卡墙（3D 立体滚动卡墙） ---------- */
+.lm-wall {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  perspective: 900px;
+  pointer-events: none;
+  /* 卡墙位于登录窗之上（用户指定遮罩关系）；自身无底色的，透出页面纸色 */
+  z-index: 20;
+}
+/* 上下边缘用纸色渐变盖住卡片出入（普通合成，不用 mask-image——
+ * mask 会强制整面卡墙每帧渲染到离屏缓冲，高分辨率下造成严重卡顿） */
+.lm-wall::before,
+.lm-wall::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 14vh;
+  z-index: 2;
+  pointer-events: none;
+}
+.lm-wall::before {
+  top: 0;
+  background: linear-gradient(to bottom, var(--color-paper) 20%, transparent);
+}
+.lm-wall::after {
+  bottom: 0;
+  background: linear-gradient(to top, var(--color-paper) 20%, transparent);
+}
+.lm-wall-plane {
+  position: absolute;
+  inset: 0;
+  transform: rotateX(14deg) rotateZ(-8deg);
+  transform-style: preserve-3d;
+}
+.lm-wall-col {
+  position: absolute;
+  top: 0;
+  transform-style: preserve-3d;
+}
+.lm-wall-col-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  will-change: transform;
+}
+.lm-wall-card {
+  width: 100%;
+  height: 132px;
+  flex: none;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lm-wall-id {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 1.25rem;
+  color: var(--color-accent);
+  letter-spacing: 0.02em;
+}
+.lm-wall-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--color-paper-2);
+}
+.lm-wall-bar--gold {
+  background: var(--color-accent-2-soft);
+  width: 58%;
+}
+.lm-wall-bar--short {
+  width: 78%;
+}
+
+/* ---------- 模糊浮现（文字） ---------- */
+.lm-blur {
+  opacity: 0;
+}
+.lm-blur--on {
+  animation: lm-blur-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: var(--d, 0ms);
+  /* 提示合成器提升为独立层：高分辨率下避免模糊滤镜每帧主线程重绘造成卡顿 */
+  will-change: filter, opacity, transform;
+}
+@keyframes lm-blur-in {
+  from {
+    opacity: 0;
+    filter: blur(5px);
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: none;
+  }
+}
+
+/* ---------- 发光边框描绘（光束扫过留下边框） ---------- */
+.lm-trace {
+  position: absolute;
+  inset: -2px;
+  width: calc(100% + 4px);
+  height: calc(100% + 4px);
+  pointer-events: none; /* 不挡输入 */
+  overflow: visible;
+}
+.lm-trace-base {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: lm-trace-draw var(--td, 1.5s) var(--ease-in-out) forwards;
+  animation-delay: var(--d, 0ms);
+}
+.lm-trace-tip {
+  /* 光束骑在已描绘边框的前沿：path 上 [前沿-4.5, 前沿] 一小段。
+   * 前沿位置 = 100 - baseOffset，故 tip 的 offset 从 4.5 走到 -95.5 */
+  stroke-dasharray: 4.5 95.5;
+  stroke-dashoffset: 4.5;
+  animation:
+    lm-trace-draw-tip var(--td, 1.5s) var(--ease-in-out) forwards,
+    lm-tip-fade var(--td, 1.5s) linear forwards;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes lm-trace-draw-tip {
+  to {
+    stroke-dashoffset: -95.5;
+  }
+}
+@keyframes lm-trace-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes lm-tip-fade {
+  0%,
+  82% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 输入框聚焦：同一条描边变蓝（位置与灰框完全重合），不再叠加更大的蓝 outline */
+.lm-trace-host input:focus-visible {
+  outline: none;
+}
+.lm-trace-host:focus-within .lm-trace-base {
+  stroke: var(--color-focus);
+  stroke-width: 2px;
+}
+
+/* ---------- 卡片表面（随描绘阶段显现） ---------- */
+.lm-surface {
+  opacity: 0;
+  transition: opacity 0.45s var(--ease-out);
+}
+.lm-surface--on {
+  opacity: 1;
+}
+
+/* ---------- 弹簧抖动（输入错误，wobble-input 参数） ---------- */
+.lm-shake {
+  animation: lm-shake 0.4s var(--ease-in-out);
+}
+@keyframes lm-shake {
+  0% {
+    transform: translateX(0);
+  }
+  18% {
+    transform: translateX(-10px);
+  }
+  36% {
+    transform: translateX(10px);
+  }
+  54% {
+    transform: translateX(-6px);
+  }
+  72% {
+    transform: translateX(6px);
+  }
+  90% {
+    transform: translateX(-2px);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+/* 边框闪红 800ms（配合抖动） */
+.lm-input-error {
+  animation: lm-input-error 0.8s var(--ease-out);
+}
+@keyframes lm-input-error {
+  0%,
+  60% {
+    box-shadow: 0 0 0 1.5px var(--color-danger);
+  }
+  100% {
+    box-shadow: 0 0 0 1.5px transparent;
+  }
+}
+/* 错误提示从上方滑下 */
+.lm-error-slide {
+  animation: lm-error-slide 0.35s var(--ease-spring);
+}
+@keyframes lm-error-slide {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- 粒子碎裂 / 星空穿梭时隐藏内容 ---------- */
+.lm-gone {
+  opacity: 0;
+  transition: opacity 0.08s linear;
+  pointer-events: none;
+}
+
+/* ---------- 首页跃入 + 摊平 ----------
+ * 由 HomePage.jsx 以 rAF 绝对时间驱动（CSS 动画版不可靠，已废弃） */
+
+/* ---------- 过场画布 ----------
+ * 必须显式 100% 宽高：canvas 是可替换元素，仅设 inset 会按位图尺寸显示，
+ * 在 DPR>1 的机器上整体放大、中心点偏向右下 */
+.lm-fx-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 50;
+  pointer-events: none;
+}

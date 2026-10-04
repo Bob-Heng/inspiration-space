@@ -39,9 +39,13 @@ export default function ScrollElevator({ target = 'window', inline = false, clas
     const listener = scroller ?? window
     listener.addEventListener('scroll', check, { passive: true })
     window.addEventListener('resize', check)
+    // 内容异步加载导致高度变化时重检（否则页首看不到按钮，首次滚动后才出现）
+    const ro = new ResizeObserver(check)
+    ro.observe(el)
     return () => {
       listener.removeEventListener('scroll', check)
       window.removeEventListener('resize', check)
+      ro.disconnect()
     }
   }, [getScroller])
 
@@ -78,7 +82,7 @@ export default function ScrollElevator({ target = 'window', inline = false, clas
         type="button"
         aria-label="回到顶部"
         title="回到顶部"
-        className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-white shadow-lg hover:bg-slate-700"
+        className="flex h-10 w-10 items-center justify-center rounded-full bg-ink text-accent-ink shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:bg-accent hover:shadow-lift"
         onClick={() => animatedScroll(true)}
       >
         <Chevron up />
@@ -87,7 +91,7 @@ export default function ScrollElevator({ target = 'window', inline = false, clas
         type="button"
         aria-label="来到底部"
         title="来到底部"
-        className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-white shadow-lg hover:bg-slate-700"
+        className="flex h-10 w-10 items-center justify-center rounded-full bg-ink text-accent-ink shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:bg-accent hover:shadow-lift"
         onClick={() => animatedScroll(false)}
       >
         <Chevron up={false} />

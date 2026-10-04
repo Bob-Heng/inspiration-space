@@ -1,0 +1,333 @@
+/* Hallmark · genre: playful · macrostructure: Workbench (app) · design-system: design.md · designed-as-app
+ * 灵感空间 design tokens — 唯一事实源。全站颜色/字体/间距/动效必须引用这里的命名 token。
+ */
+
+@theme {
+  /* 色板：白底 + 深靛墨 + 星空蓝/流星金（呼应 logo） */
+  --color-paper: oklch(98.8% 0.004 95);
+  --color-paper-2: oklch(96.8% 0.008 255);
+  --color-ink: oklch(34% 0.035 275);
+  --color-ink-2: oklch(52% 0.028 275);
+  --color-ink-3: oklch(68% 0.02 275);
+  --color-rule: oklch(90.5% 0.01 265);
+  --color-accent: oklch(58% 0.16 258);
+  --color-accent-soft: oklch(94% 0.03 258);
+  --color-accent-2: oklch(82% 0.15 88);
+  --color-accent-2-soft: oklch(95% 0.05 92);
+  --color-accent-ink: oklch(99% 0.003 95);
+  --color-focus: oklch(58% 0.16 258);
+  --color-danger: oklch(58% 0.19 28);
+  --color-danger-soft: oklch(95% 0.025 28);
+
+  /* 字体：离线系统栈，不加载网络字体 */
+  --font-display: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+  --font-body: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New",
+    monospace;
+
+  /* 间距 4pt 标尺 */
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3rem;
+  --space-2xl: 4.5rem;
+  --space-3xl: 7rem;
+
+  /* 字阶 */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+  --text-display: clamp(2rem, 1.4rem + 2.4vw, 3rem);
+
+  /* 动效 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.32, 0, 0.67, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --dur-fast: 160ms;
+  --dur-short: 220ms;
+  --dur-med: 320ms;
+
+  /* 圆角语言 */
+  --radius-card: 20px;
+  --radius-input: 12px;
+  --radius-pill: 999px;
+
+  /* 阴影：柔和、低饱和 */
+  --shadow-card: 0 1px 2px oklch(34% 0.035 275 / 0.05),
+    0 12px 32px -12px oklch(45% 0.06 265 / 0.16);
+  --shadow-lift: 0 2px 4px oklch(34% 0.035 275 / 0.06),
+    0 20px 44px -14px oklch(45% 0.06 265 / 0.22);
+}
+
+:root {
+  /* 供非 Tailwind 场景（canvas、SVG）读取 */
+  --paper: var(--color-paper);
+  --ink: var(--color-ink);
+  --accent: var(--color-accent);
+  --accent-2: var(--color-accent-2);
+}
+
+html,
+body {
+  overflow-x: clip;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+}
+
+/* 统一的焦点环：瞬时出现，不做动画 */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* 注：本产品为单用户个人应用，叙事动效是核心价值，机主明确选择始终播放，
+ * 不跟随系统 prefers-reduced-motion 降级（该开关在本机处于关闭动画状态）。
+ * 同时禁止全局强制 transition/animation 覆盖（会把偶发的样式变化变成幻影动画）。 */
+
+/* ================= 组件语言（App 页面共用，见 design.md） ================= */
+
+.ui-card {
+  background: #fff;
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.ui-input {
+  border-radius: var(--radius-input);
+  border: 1.5px solid var(--color-rule);
+  background: #fff;
+  transition:
+    border-color 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out);
+}
+.ui-input:focus,
+.ui-input:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.ui-btn-primary {
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  box-shadow: var(--shadow-card);
+  transition:
+    transform 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out),
+    background-color 160ms var(--ease-out);
+}
+.ui-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+}
+.ui-btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+.ui-btn-primary:disabled {
+  opacity: 0.5;
+}
+
+.ui-btn-ghost {
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--color-rule);
+  color: var(--color-ink-2);
+  background: transparent;
+  transition:
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    color 160ms var(--ease-out);
+}
+.ui-btn-ghost:hover:not(:disabled) {
+  background: var(--color-paper-2);
+  border-color: var(--color-ink-3);
+  color: var(--color-ink);
+}
+.ui-btn-ghost:disabled {
+  opacity: 0.5;
+}
+
+.ui-btn-danger {
+  border-radius: var(--radius-pill);
+  background: var(--color-danger);
+  color: #fff;
+  transition:
+    transform 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out);
+}
+.ui-btn-danger:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+}
+
+.ui-link {
+  color: var(--color-ink-2);
+  transition: color 160ms var(--ease-out);
+}
+.ui-link:hover {
+  color: var(--color-accent);
+}
+.ui-link-danger {
+  color: var(--color-danger);
+  transition: color 160ms var(--ease-out), opacity 160ms var(--ease-out);
+}
+.ui-link-danger:hover {
+  opacity: 0.75;
+}
+
+/* 页面/区块轻揭示：fade + 轻微上浮（App 页面唯一的入场动效） */
+.ui-reveal {
+  animation: ui-reveal 380ms var(--ease-out) both;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes ui-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 弹窗：遮罩淡入 + 卡片轻弹入（spring 轻回稳，不过冲） */
+.ui-modal-mask {
+  background: rgb(30 33 64 / 0.28);
+  animation: ui-fade 200ms var(--ease-out) both;
+}
+.ui-modal {
+  animation: ui-pop 280ms var(--ease-spring) both;
+}
+@keyframes ui-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ui-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 原生控件点缀色 */
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--color-accent);
+}
+
+/* 金色按钮（创造：采纳/合并/拆分/录入/入库/创建账号） */
+.ui-btn-gold {
+  border-radius: var(--radius-pill);
+  background: var(--color-accent-2);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-card);
+  transition:
+    transform 160ms var(--ease-out),
+    box-shadow 160ms var(--ease-out),
+    background-color 160ms var(--ease-out);
+}
+.ui-btn-gold:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-lift);
+}
+.ui-btn-gold:active:not(:disabled) {
+  transform: translateY(0);
+}
+.ui-btn-gold:disabled {
+  opacity: 0.5;
+}
+
+/* 滚动条永远占位：内容加载后页面不再左右移动 */
+html {
+  scrollbar-gutter: stable;
+}
+
+/* 页面切换：旧页面向下淡出 0.6s（匀速）→ 间隔 0.2s → 新页面向上淡入 0.4s（由快变慢）。
+ * 页头不参与过渡（见 header.jsx） */
+.pt-out {
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
+  transition:
+    opacity 600ms linear,
+    transform 600ms linear;
+}
+.pt-in {
+  animation: pt-in 600ms var(--ease-out) both;
+}
+@keyframes pt-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 页头 extras 交叉淡化：旧页独有按钮 0.4s 匀速淡出，新页独有按钮 0.4s 匀速淡入
+ * （入场同步做宽度展开，避免挤压既有按钮位置） */
+.hh-x {
+  display: inline-flex;
+  animation: hh-in 400ms linear both;
+}
+.hh-grow {
+  overflow: hidden;
+  white-space: nowrap;
+  animation:
+    hh-in 400ms linear both,
+    hh-grow 400ms linear both;
+}
+.hh-x--leave {
+  display: inline-flex;
+  animation: hh-out 400ms linear both;
+}
+@keyframes hh-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes hh-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes hh-grow {
+  from {
+    max-width: 0;
+  }
+  to {
+    max-width: 240px;
+  }
+}

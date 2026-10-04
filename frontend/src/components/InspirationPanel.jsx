@@ -2,9 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import ItemTitle from './ItemTitle'
+import PhaseBadge from './PhaseBadge'
+import SortToggle from './SortToggle'
 import TranslatedText from './TranslatedText'
 import { useLang } from '../i18n'
 import { statusLabel } from '../vocab'
+
+// 每页条数（客户端分页）
+const PAGE_SIZE = 10
 
 /**
  * 灵感录入与队列组件。可复用：嵌入首页与后续审议工作台，不设独立灵感页。
@@ -36,7 +41,6 @@ export default function InspirationPanel() {
   const load = useCallback(async () => {
     try {
       const data = await api.listInspirations({
-        status: statusFilter || undefined,
         keyword: keyword || undefined,
       })
       setItems(data)
@@ -44,7 +48,7 @@ export default function InspirationPanel() {
     } catch (err) {
       setError(err.message)
     }
-  }, [statusFilter, keyword])
+  }, [keyword])
 
   useEffect(() => {
     load()
@@ -123,10 +127,14 @@ export default function InspirationPanel() {
     }
   }
 
-  async function handleSaveEdit(id) {
+  async function handleSaveEdit(item) {
     if (!editingContent.trim()) return
+    // 已关联观点且正文实际变化：编辑会使他山坊中的观点回退到提炼最开始
+    // （讨论/分析清空），需确认；仅日期等变化不动观点，免弹窗直接保存
+    const contentChanged = editingContent.trim() !== (item.content ?? '').trim()
+    if (contentChanged && item.viewpoint_id && !window.confirm(t('editResetConfirm'))) return
     try {
-      await api.updateInspiration(id, { content: editingContent.trim() })
+      await api.updateInspiration(item.id, { content: editingContent.trim() })
       setEditingId(null)
       await load()
     } catch (err) {
@@ -175,36 +183,61 @@ export default function InspirationPanel() {
 
   const selectedCount = preview?.items.filter((item) => item.selected).length ?? 0
 
+  // 状态筛选为前端过滤：accepted=已入库；distill/polish=对应阶段的 draft 观点
+  const [sortOrder, setSortOrder] = useState('desc')
+  const visibleItems = items.filter((item) => {
+    if (!statusFilter) return true
+    if (statusFilter === 'accepted') return item.viewpoint_status === 'accepted'
+    return item.viewpoint_status === 'draft' && item.viewpoint_phase === statusFilter
+  })
+
+  const sortedItems = [...visibleItems].sort((a, b) =>
+    sortOrder === 'asc' ? a.id - b.id : b.id - a.id,
+  )
+
+  // 客户端分页：筛选/搜索在事件里重置到第 1 页；录入/删除/编辑等导致总数变化时
+  // 当前页在渲染期夹取到合法范围（state 里的旧页码可越界，展示一律用夹取值）
+  const [page, setPage] = useState(1)
+  const totalPages = Math.max(1, Math.ceil(sortedItems.length / PAGE_SIZE))
+  const currentPage = Math.min(Math.max(1, page), totalPages)
+  const pageItems = sortedItems.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE,
+  )
+
+  function jumpToPage(value) {
+    const v = parseInt(value, 10)
+    if (Number.isNaN(v)) return
+    setPage(Math.min(Math.max(1, v), totalPages))
+  }
+
   return (
     <div className="space-y-6">
-      <form onSubmit={handleCreate} className="rounded-lg bg-white p-4 shadow">
+      <form onSubmit={handleCreate} className="ui-card p-5">
         <textarea
-          className="w-full rounded border border-slate-300 p-3 outline-none focus:border-slate-500"
+          className="ui-input w-full p-3"
           rows={3}
           placeholder={t('recordPlaceholder')}
           value={content}
           onChange={(e) => setContent(e.target.value)}
         />
-        <div className="mt-2 flex items-center gap-3">
-          <label className="text-sm text-slate-500">
+        <div className="mt-3 flex items-center gap-3">
+          <label className="text-sm text-ink-2">
             {t('sourceDateOptional')}
             <input
               type="date"
-              className="ml-2 rounded border border-slate-300 px-2 py-1"
+              className="ui-input ml-2 px-2 py-1"
               value={sourceDate}
               onChange={(e) => setSourceDate(e.target.value)}
             />
           </label>
-          <button
-            type="submit"
-            className="ml-auto rounded bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700"
-          >
+          <button type="submit" className="ui-btn-gold ml-auto px-4 py-2 text-sm">
             {t('addToQueue')}
           </button>
           <button
             type="button"
             disabled={importing}
-            className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            className="ui-btn-ghost px-4 py-2 text-sm"
             onClick={() => fileInputRef.current?.click()}
           >
             {importing ? t('importing') : t('importDocx')}
@@ -220,9 +253,9 @@ export default function InspirationPanel() {
       </form>
 
       {preview && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 shadow">
+        <div className="rounded-card border border-accent-2 bg-accent-2-soft p-4 shadow-card">
           <div className="flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-slate-800">
+            <h2 className="text-sm font-semibold text-ink">
               {tf('importPreview', {
                 name: preview.filename,
                 total: preview.items.length,
@@ -232,27 +265,27 @@ export default function InspirationPanel() {
             <div className="ml-auto flex gap-2">
               <button
                 disabled={confirming || selectedCount === 0}
-                className="rounded bg-slate-800 px-4 py-2 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+                className="ui-btn-gold px-4 py-2 text-sm"
                 onClick={handleConfirmImport}
               >
                 {confirming ? t('confirmingImport') : tf('confirmImport', { n: selectedCount })}
               </button>
               <button
                 disabled={confirming}
-                className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-white"
+                className="ui-btn-ghost bg-white px-4 py-2 text-sm"
                 onClick={() => setPreview(null)}
               >
                 {t('cancel')}
               </button>
             </div>
           </div>
-          <p className="mt-1 text-xs text-slate-500">{t('importHint')}</p>
+          <p className="mt-1 text-xs text-ink-2">{t('importHint')}</p>
           <ul className="mt-3 space-y-2">
             {preview.items.map((item, index) => (
               <li
                 key={index}
-                className={`rounded border p-3 ${
-                  item.selected ? 'border-slate-300 bg-white' : 'border-slate-200 bg-slate-50 opacity-60'
+                className={`rounded-input border p-3 ${
+                  item.selected ? 'border-rule bg-white' : 'border-rule/60 bg-paper-2 opacity-60'
                 }`}
               >
                 <div className="flex items-start gap-3">
@@ -264,16 +297,16 @@ export default function InspirationPanel() {
                   />
                   <div className="min-w-0 flex-1 space-y-2">
                     <textarea
-                      className="w-full rounded border border-slate-200 p-2 text-sm outline-none focus:border-slate-500"
+                      className="ui-input w-full p-2 text-sm"
                       rows={Math.min(6, Math.max(2, item.content.split('\n').length + 1))}
                       value={item.content}
                       onChange={(e) => updatePreviewItem(index, { content: e.target.value })}
                     />
-                    <label className="block text-xs text-slate-500">
+                    <label className="block text-xs text-ink-2">
                       {t('colSourceDate')}
                       <input
                         type="date"
-                        className="ml-2 rounded border border-slate-300 px-2 py-0.5"
+                        className="ui-input ml-2 px-2 py-0.5"
                         value={item.source_date}
                         onChange={(e) => updatePreviewItem(index, { source_date: e.target.value })}
                       />
@@ -288,47 +321,55 @@ export default function InspirationPanel() {
 
       <div className="flex items-center gap-3">
         <input
-          className="w-64 rounded border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-slate-500"
+          className="ui-input w-64 px-3 py-1.5 text-sm"
           placeholder={t('keywordSearch')}
           value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
+          onChange={(e) => {
+            setKeyword(e.target.value)
+            setPage(1)
+          }}
         />
         <select
-          className="rounded border border-slate-300 px-2 py-1.5 text-sm"
+          className="ui-input px-2 py-1.5 text-sm"
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) => {
+            setStatusFilter(e.target.value)
+            setPage(1)
+          }}
         >
           <option value="">{t('allStatus')}</option>
-          <option value="pending">{statusLabel('pending', lang)}</option>
-          <option value="in_review">{statusLabel('in_review', lang)}</option>
-          <option value="reviewed">{statusLabel('reviewed', lang)}</option>
-          <option value="rejected">{statusLabel('rejected', lang)}</option>
+          <option value="distill">{t('phaseDistill')}</option>
+          <option value="polish">{t('phasePolish')}</option>
+          <option value="accepted">{statusLabel('accepted', lang)}</option>
         </select>
-        <span className="text-sm text-slate-500">{tf('totalItems', { n: items.length })}</span>
+        <span className="text-sm text-ink-2">
+          {tf('totalItems', { n: visibleItems.length })}
+        </span>
+        <SortToggle order={sortOrder} onChange={setSortOrder} />
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
-      <ul className="space-y-2">
-        {items.map((item) => (
-          <li key={item.id} className="rounded-lg bg-white p-4 shadow">
+      <ul className="ui-reveal space-y-2.5">
+        {pageItems.map((item) => (
+          <li key={item.id} className="ui-card p-4">
             {editingId === item.id ? (
               <div>
                 <textarea
-                  className="w-full rounded border border-slate-300 p-2 outline-none focus:border-slate-500"
+                  className="ui-input w-full p-2"
                   rows={3}
                   value={editingContent}
                   onChange={(e) => setEditingContent(e.target.value)}
                 />
                 <div className="mt-2 flex gap-2">
                   <button
-                    className="rounded bg-slate-800 px-3 py-1 text-sm text-white"
-                    onClick={() => handleSaveEdit(item.id)}
+                    className="ui-btn-primary px-3 py-1 text-sm"
+                    onClick={() => handleSaveEdit(item)}
                   >
                     {t('save')}
                   </button>
                   <button
-                    className="rounded border border-slate-300 px-3 py-1 text-sm"
+                    className="ui-btn-ghost px-3 py-1 text-sm"
                     onClick={() => setEditingId(null)}
                   >
                     {t('cancel')}
@@ -337,12 +378,12 @@ export default function InspirationPanel() {
               </div>
             ) : (
               <div className="flex items-start gap-3">
-                <span className="shrink-0 font-mono text-sm text-slate-400">
+                <span className="shrink-0 font-mono text-sm text-accent">
                   #{item.id}
                 </span>
                 <div className="min-w-0 flex-1">
                   <ItemTitle titleZh={item.title_zh} titleEn={item.title_en} id={item.id} />
-                  <p className="text-slate-800">
+                  <p className="text-ink">
                     <TranslatedText
                       contentZh={item.content_zh}
                       contentEn={item.content_en}
@@ -350,70 +391,141 @@ export default function InspirationPanel() {
                       clamp
                     />
                   </p>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {item.source_date ?? t('noSourceDateFull')} ·{' '}
-                    {statusLabel(item.status, lang)}
+                  <p className="mt-1 text-xs text-ink-3">
+                    {item.source_date ?? t('noSourceDateFull')}
+                    {item.viewpoint_status === 'accepted' && (
+                      <span className="ml-2 rounded-pill bg-accent-soft px-2 py-0.5 text-accent">
+                        {statusLabel('accepted', lang)}
+                      </span>
+                    )}
+                    {item.viewpoint_status === 'draft' && (
+                      <PhaseBadge phase={item.viewpoint_phase} className="ml-2" />
+                    )}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-2">
-                  {(item.status === 'pending' || item.status === 'in_review') && (
+                  {item.viewpoint_status === 'draft' && item.viewpoint_id && (
                     <button
-                      className="text-sm text-slate-800 hover:underline"
-                      onClick={() => navigate(`/review?inspiration=${item.id}`)}
+                      className="text-sm font-medium text-accent hover:underline"
+                      onClick={() =>
+                        navigate(`/review?viewpoint=${item.viewpoint_id}&auto=1`)
+                      }
                     >
                       {t('startReview')}
                     </button>
                   )}
-                  <button
-                    className="text-sm text-slate-500 hover:text-slate-800"
-                    onClick={() => {
-                      setEditingId(item.id)
-                      setEditingContent(item.content)
-                    }}
+                  <span
+                    title={
+                      item.viewpoint_status === 'accepted'
+                        ? t('adoptedEditLocked')
+                        : undefined
+                    }
                   >
-                    {t('edit')}
-                  </button>
+                    <button
+                      className={`ui-link text-sm${
+                        item.viewpoint_status === 'accepted'
+                          ? ' cursor-not-allowed opacity-40'
+                          : ''
+                      }`}
+                      disabled={item.viewpoint_status === 'accepted'}
+                      onClick={() => {
+                        setEditingId(item.id)
+                        setEditingContent(item.content)
+                      }}
+                    >
+                      {t('edit')}
+                    </button>
+                  </span>
                   <button
-                    className="text-sm text-slate-500 hover:text-slate-800"
+                    className="ui-link text-sm"
                     onClick={() => openRename(item)}
                   >
                     {t('rename')}
                   </button>
-                  <button
-                    className="text-sm text-red-500 hover:text-red-700"
-                    onClick={() => setDeletingItem(item)}
+                  <span
+                    title={
+                      item.viewpoint_status === 'accepted'
+                        ? t('adoptedDeleteLocked')
+                        : undefined
+                    }
                   >
-                    {t('delete')}
-                  </button>
+                    <button
+                      className={`ui-link-danger text-sm${
+                        item.viewpoint_status === 'accepted'
+                          ? ' cursor-not-allowed opacity-40'
+                          : ''
+                      }`}
+                      disabled={item.viewpoint_status === 'accepted'}
+                      onClick={() => setDeletingItem(item)}
+                    >
+                      {t('delete')}
+                    </button>
+                  </span>
                 </div>
               </div>
             )}
           </li>
         ))}
-        {items.length === 0 && (
-          <li className="rounded-lg bg-white p-6 text-center text-sm text-slate-400 shadow">
+        {visibleItems.length === 0 && (
+          <li className="ui-card p-6 text-center text-sm text-ink-3">
             {t('queueEmpty')}
           </li>
         )}
         <li ref={listEndRef} className="h-px list-none" aria-hidden />
       </ul>
 
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2 text-sm text-ink-2">
+          <button
+            className="ui-btn-ghost px-3 py-1.5"
+            disabled={currentPage <= 1}
+            onClick={() => setPage(Math.max(1, currentPage - 1))}
+          >
+            {t('prevPage')}
+          </button>
+          <input
+            key={currentPage}
+            className="ui-input w-14 px-2 py-1 text-center text-sm"
+            defaultValue={currentPage}
+            inputMode="numeric"
+            aria-label={tf('pageOf', { x: currentPage, n: totalPages })}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                jumpToPage(e.currentTarget.value)
+                e.currentTarget.blur()
+              }
+            }}
+            onBlur={(e) => {
+              e.target.value = String(currentPage)
+            }}
+          />
+          <span>{tf('pageOf', { x: currentPage, n: totalPages })}</span>
+          <button
+            className="ui-btn-ghost px-3 py-1.5"
+            disabled={currentPage >= totalPages}
+            onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+          >
+            {t('nextPage')}
+          </button>
+        </div>
+      )}
+
       {renameTarget && (
-        <div className="fixed inset-0 z-10 flex items-center justify-center bg-slate-900/30 p-4">
+        <div className="ui-modal-mask fixed inset-0 z-10 flex items-center justify-center p-4">
           <form
-            className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl"
+            className="ui-card ui-modal w-full max-w-sm p-6"
             onSubmit={handleRenameSubmit}
           >
-            <h3 className="text-sm font-bold text-slate-800">{t('renameDialogTitle')}</h3>
+            <h3 className="text-sm font-bold text-ink">{t('renameDialogTitle')}</h3>
             <input
-              className="mt-3 w-full rounded border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+              className="ui-input mt-3 w-full px-3 py-2 text-sm"
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
               placeholder={t('renamePlaceholder')}
               autoFocus
             />
-            <div className="mt-3 flex items-center gap-4 text-sm text-slate-600">
-              <span className="text-xs text-slate-500">{t('renameLangLabel')}</span>
+            <div className="mt-3 flex items-center gap-4 text-sm text-ink-2">
+              <span className="text-xs text-ink-3">{t('renameLangLabel')}</span>
               <label className="flex items-center gap-1">
                 <input
                   type="radio"
@@ -431,11 +543,11 @@ export default function InspirationPanel() {
                 English
               </label>
             </div>
-            {renameError && <p className="mt-2 text-sm text-red-600">{renameError}</p>}
+            {renameError && <p className="mt-2 text-sm text-danger">{renameError}</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
-                className="rounded border border-slate-300 px-3 py-1.5 text-sm"
+                className="ui-btn-ghost px-3 py-1.5 text-sm"
                 onClick={() => setRenameTarget(null)}
                 disabled={renameSubmitting}
               >
@@ -443,7 +555,7 @@ export default function InspirationPanel() {
               </button>
               <button
                 type="submit"
-                className="rounded bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+                className="ui-btn-primary px-3 py-1.5 text-sm"
                 disabled={renameSubmitting || !renameValue.trim()}
               >
                 {renameSubmitting ? t('renaming') : t('confirm')}
@@ -454,28 +566,19 @@ export default function InspirationPanel() {
       )}
 
       {deletingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30">
-          <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-xl">
-            <h3 className="text-sm font-bold text-slate-800">
-              {deletingItem.status === 'pending'
-                ? tf('deleteConfirm', { id: deletingItem.id })
-                : t('deleteCascadeTitle')}
-            </h3>
-            {(deletingItem.status === 'in_review' ||
-              deletingItem.status === 'reviewed') && (
-              <p className="mt-2 text-sm text-slate-600">
-                {tf('deleteCascadeBody', { id: deletingItem.id })}
-              </p>
-            )}
+        <div className="ui-modal-mask fixed inset-0 z-50 flex items-center justify-center">
+          <div className="ui-card ui-modal w-full max-w-sm p-5">
+            <h3 className="text-sm font-bold text-ink">{t('deleteCascadeTitle')}</h3>
+            <p className="mt-2 text-sm text-ink-2">{t('deleteCascadeBody')}</p>
             <div className="mt-4 flex justify-end gap-2">
               <button
-                className="rounded border border-slate-300 px-3 py-1.5 text-sm"
+                className="ui-btn-ghost px-3 py-1.5 text-sm"
                 onClick={() => setDeletingItem(null)}
               >
                 {t('cancel')}
               </button>
               <button
-                className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-500"
+                className="ui-btn-danger px-3 py-1.5 text-sm"
                 onClick={handleConfirmDelete}
               >
                 {t('deleteAnyway')}

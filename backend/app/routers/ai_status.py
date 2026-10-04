@@ -1,4 +1,4 @@
-"""AI 服务状态：供前端 30s 轮询；恢复时可直接触发对账补全。"""
+"""AI 服务状态：供前端 30s 轮询；恢复时可直接触发对账补全。附 AI 标题建议。"""
 
 import asyncio
 import logging
@@ -10,7 +10,10 @@ from ..ai.errors import LLMConfigError
 from ..ai.provider_config import resolve_llm_config
 from ..auth import require_user
 from ..db import get_db
+from ..errors import biz_error
 from ..domain.reconcile import reconcile_i18n
+from ..domain.titles import make_titles
+from ..schemas import TitleSuggestionOut, TitleSuggestionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -55,3 +58,20 @@ async def reconcile() -> dict:
 
     asyncio.create_task(_run())
     return {"started": True}
+
+
+@router.post("/title-suggestion", response_model=TitleSuggestionOut)
+async def title_suggestion(
+    payload: TitleSuggestionRequest, db: Session = Depends(get_db)
+) -> TitleSuggestionOut:
+    """AI 标题建议：以正文生成双语标题（不落库）；AI 不可用时报 503 双语错误。"""
+    titles = await make_titles(db, payload.content)
+    if titles["title_zh"] is None:
+        raise biz_error(
+            503, "ai_unavailable",
+            "标题生成失败：大模型未接入，请检查 AI 服务设置。",
+            "Title suggestion failed: AI service is unavailable. Please check the AI service settings.",
+        )
+    return TitleSuggestionOut(
+        title_zh=titles["title_zh"], title_en=titles["title_en"]
+    )

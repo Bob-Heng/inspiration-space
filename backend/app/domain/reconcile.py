@@ -38,6 +38,9 @@ async def reconcile_i18n() -> None:
                 fixed += 1
         for model in (Inspiration, Viewpoint):
             for row in db.scalars(select(model)).all():
+                # 观点标题只在采纳时生成（D10），草稿观点不补
+                if isinstance(row, Viewpoint) and row.status != "accepted":
+                    continue
                 if row.title_zh and row.title_en:
                     continue
                 titles = await make_titles(db, row.content)

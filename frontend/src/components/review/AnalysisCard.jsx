@@ -4,8 +4,8 @@ import { relationLabel, tagLabel } from '../../vocab'
 function Section({ title, children }) {
   return (
     <section>
-      <h3 className="text-xs font-bold text-slate-500">{title}</h3>
-      <div className="mt-1 text-sm text-slate-800">{children}</div>
+      <h3 className="text-xs font-bold text-ink-2">{title}</h3>
+      <div className="mt-1 text-sm text-ink">{children}</div>
     </section>
   )
 }
@@ -15,11 +15,11 @@ export default function AnalysisCard({ analysis, loading, onAnalyze }) {
   const tags = analysis?.tags ?? {}
 
   return (
-    <div className="rounded-lg bg-white p-4 shadow">
+    <div className="ui-card p-4">
       <div className="flex items-center">
-        <h2 className="text-sm font-bold text-slate-800">{t('aiAnalysis')}</h2>
+        <h2 className="text-sm font-bold text-ink">{t('aiAnalysis')}</h2>
         <button
-          className="ml-auto rounded bg-slate-800 px-3 py-1.5 text-sm text-white hover:bg-slate-700 disabled:opacity-50"
+          className="ui-btn-primary ml-auto px-3 py-1.5 text-sm"
           onClick={onAnalyze}
           disabled={loading}
         >
@@ -27,9 +27,9 @@ export default function AnalysisCard({ analysis, loading, onAnalyze }) {
         </button>
       </div>
 
-      {loading && <p className="mt-3 text-sm text-slate-400">{t('analyzing')}</p>}
+      {loading && <p className="mt-3 text-sm text-ink-3">{t('analyzing')}</p>}
       {!analysis && !loading && (
-        <p className="mt-3 text-sm text-slate-400">{t('analysisHint')}</p>
+        <p className="mt-3 text-sm text-ink-3">{t('analysisHint')}</p>
       )}
 
       {analysis && (
@@ -73,10 +73,10 @@ export default function AnalysisCard({ analysis, loading, onAnalyze }) {
                 {analysis.relations.map((rel) => (
                   <li key={`${rel.type}-${rel.viewpoint_id}`}>
                     <span
-                      className={`mr-1 rounded px-1.5 py-0.5 text-xs ${
+                      className={`mr-1 rounded-pill px-1.5 py-0.5 text-xs ${
                         rel.type === 'conflict'
-                          ? 'bg-red-100 text-red-700'
-                          : 'bg-slate-200 text-slate-600'
+                          ? 'bg-danger-soft text-danger'
+                          : 'bg-paper-2 text-ink-2'
                       }`}
                     >
                       {relationLabel(rel.type, lang)}

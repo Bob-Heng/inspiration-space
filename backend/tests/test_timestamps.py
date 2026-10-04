@@ -63,7 +63,7 @@ class TestUtcDateTime:
         assert abs((utcnow() - row.created_at).total_seconds()) < 60
 
     def test_none字段读写为空(self, db_session):
-        db_session.add(ReviewSession(inspiration_id=1, status="active"))
+        db_session.add(ReviewSession(viewpoint_id=1, status="active"))
         db_session.commit()
         row = db_session.scalars(select(ReviewSession)).one()
         assert row.ended_at is None

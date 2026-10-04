@@ -1,36 +1,48 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLang } from '../../i18n'
-import { statusLabel } from '../../vocab'
 import ItemTitle from '../ItemTitle'
+import SortToggle from '../SortToggle'
+import PhaseBadge from '../PhaseBadge'
 import TranslatedText from '../TranslatedText'
 
 export default function ReviewQueue({ items, selectedId, onSelect, error }) {
-  const { t, tf, lang } = useLang()
+  const { t, tf } = useLang()
   const itemRefs = useRef(new Map())
+  const [sortOrder, setSortOrder] = useState('asc')
+  const sorted = [...items].sort((a, b) => {
+    const da = a.inspiration_id ?? a.id
+    const db = b.inspiration_id ?? b.id
+    return sortOrder === 'asc' ? da - db : db - da
+  })
 
-  // 打开审议（含从首页跳转）时，队列自动滚动到选中的灵感。
-  // 布局稳定需要一帧以上，渲染后再延时重试一次。
+  // 打开打磨（含从首页跳转、恢复会话）时，队列自动滚动到选中的观点。
+  // 等目标条目真实渲染后只滚一次：双 rAF 让行内异步测量（如 clamp 的展开按钮）
+  // 完成后再定位，避免先滚到过期位置再二次纠正（跳动）。
   useEffect(() => {
     if (selectedId == null) return
-    const scroll = () => {
-      const el = itemRefs.current.get(selectedId)
-      if (el) el.scrollIntoView({ block: 'nearest' })
-    }
-    const raf = requestAnimationFrame(scroll)
-    const timer = setTimeout(scroll, 300)
+    if (!itemRefs.current.has(selectedId)) return
+    let inner
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => {
+        itemRefs.current.get(selectedId)?.scrollIntoView({ block: 'nearest' })
+      })
+    })
     return () => {
-      cancelAnimationFrame(raf)
-      clearTimeout(timer)
+      cancelAnimationFrame(outer)
+      if (inner) cancelAnimationFrame(inner)
     }
-  }, [selectedId, items.length])
+  }, [selectedId, items])
 
   return (
-    <div className="rounded-lg bg-white p-4 shadow">
-      <h2 className="text-sm font-bold text-slate-800">{t('queue')}</h2>
-      <p className="mt-1 text-xs text-slate-400">{tf('totalItems', { n: items.length })}</p>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    <div className="ui-card p-4">
+      <div className="flex items-center">
+        <h2 className="text-sm font-bold text-ink">{t('queue')}</h2>
+        <SortToggle className="ml-2" order={sortOrder} onChange={setSortOrder} />
+      </div>
+      <p className="mt-1 text-xs text-ink-3">{tf('totalItems', { n: items.length })}</p>
+      {error && <p className="mt-2 text-sm text-danger">{error}</p>}
       <ul className="mt-3 space-y-2">
-        {items.map((item) => (
+        {sorted.map((item) => (
           <li
             key={item.id}
             ref={(el) => {
@@ -39,21 +51,19 @@ export default function ReviewQueue({ items, selectedId, onSelect, error }) {
             }}
           >
             <button
-              className={`w-full rounded border p-3 text-left text-sm ${
+              className={`w-full rounded border p-3 text-left text-sm transition-colors duration-200 ${
                 selectedId === item.id
-                  ? 'border-slate-800 bg-slate-100'
-                  : 'border-slate-200 hover:border-slate-400'
+                  ? 'border-accent bg-accent-soft'
+                  : 'border-rule hover:bg-paper-2'
               }`}
               onClick={() => onSelect(item.id)}
             >
               <div className="flex items-center gap-2">
-                <span className="font-mono text-xs text-slate-400">#{item.id}</span>
-                <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs text-slate-600">
-                  {statusLabel(item.status, lang)}
-                </span>
+                <span className="font-mono text-xs text-accent">#{item.inspiration_id ?? item.id}</span>
+                <PhaseBadge phase={item.phase} />
               </div>
               <ItemTitle titleZh={item.title_zh} titleEn={item.title_en} id={item.id} />
-              <p className="mt-1 text-slate-800">
+              <p className="mt-1 text-ink">
                 <TranslatedText
                   contentZh={item.content_zh}
                   contentEn={item.content_en}
@@ -65,7 +75,7 @@ export default function ReviewQueue({ items, selectedId, onSelect, error }) {
           </li>
         ))}
         {items.length === 0 && (
-          <li className="py-6 text-center text-xs text-slate-400">{t('queueEmpty')}</li>
+          <li className="py-6 text-center text-xs text-ink-3">{t('queueEmpty')}</li>
         )}
       </ul>
     </div>

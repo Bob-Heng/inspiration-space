@@ -1,15 +1,33 @@
-"""审议会话与审议决策的领域逻辑。
+"""打磨会话与打磨决策的领域逻辑。
 
-开会话规则（docs/02 §5 审议节、TASK-010）：
-- 同一灵感同时只允许一个 active 会话；重复开会话返回进行中的会话；
-- 存在已挂起（paused）会话时，开会话即恢复该会话（暂缓不产生新终态，灵感回到 pending 后可再次进入审议）；
-- 已完结（reviewed / rejected）的灵感不得再开会话。
+打磨分两个阶段（docs/04 D9）：提炼（distill）→ 打磨（polish）。
+新建会话默认进入提炼阶段（phase="distill"），帮用户把现象/素材/疑问收敛为
+可裁决的观点；观点草稿即会话关联的 draft 观点本身（录入灵感时已复制创建，
+存量数据由 ensure_schema_upgrades 补建），采纳后转为 accepted 对集思录可见。
 
-决策规则（TASK-011、设计说明书 §6.2 事务节）：
-- 采纳 / 修改后采纳：在一个事务内建观点、建相近/冲突关系、记决策、关闭会话、灵感出队留档；任一步失败整体回滚；
-- 带冲突关系时新观点与被冲突观点双方转悬置，关系行互记双方编号；
-- 否定：记决策（含理由）、关闭会话、灵感出队留档，不建观点；
-- 暂缓：不产生任何终态，会话挂起、灵感回到 pending，不写决策记录。
+开会话规则：
+- 只有 draft 观点可以开会话：已入库（accepted）的观点不得再开会话；
+- 全站同时只允许一个 active 会话：开启/恢复某观点的会话时，其他观点的 active 会话自动挂起（paused），
+  再次进入对应观点时恢复（关窗重开据此恢复最近操作的会话）；
+- 同一观点重复开会话返回进行中的会话（断点续聊）；
+- 存在已挂起（paused）会话时，开会话即恢复该会话。
+
+撤销规则：
+- 消息级撤销（undo_last_message）只删不回、不跨阶段：删当前 phase 的最后一条消息；
+  删掉的是 assistant 且新的同 phase 末条是 user 时再删该 user 条
+  （一次撤销 = 一轮对话或一条落单消息）；无同 phase 消息时不动；
+- 阶段级回退（undo_phase）：polish → distill 清空分析（含英文版）并删除全部
+  打磨消息，观点正文不动；distill → 重置删除全部消息，观点正文与双语版本
+  恢复为关联灵感原文。
+
+决策规则（TASK-011、设计说明书 §6.2 事务节）：只有"采纳"一种决策——
+在一个事务内把会话关联的草稿观点转为 accepted（写入最终正文/双语/标题/分层/
+标签）、建相近/冲突关系（只建行，不联动任何状态）、记决策、关闭会话；
+任一步失败整体回滚。
+
+撤回规则：集思录撤回（withdraw_viewpoint）把 accepted 观点退回 draft，
+重开其最近一条 completed 会话（completed → active，阶段与分析消息原样保留），
+并作废该会话的采纳决策行；草稿观点重新出现在他山坊队列。
 """
 
 from dataclasses import dataclass
@@ -21,6 +39,7 @@ from ..ai.schemas import AnalysisRelation, AnalysisTags
 from ..models import (
     Inspiration,
     ReviewDecision,
+    ReviewMessage,
     ReviewSession,
     Viewpoint,
     ViewpointRelation,
@@ -28,36 +47,78 @@ from ..models import (
 from ..timeutils import utcnow
 from .tags import InvalidTagError, LAYER_CODES, validate_layer, validate_tags
 from .viewpoint_state import (
-    check_inspiration_transition,
+    InvalidTransitionError,
     check_session_transition,
     check_viewpoint_transition,
 )
 
-INSPIRATION_FINAL_STATUSES = {"reviewed", "rejected"}
-
 
 class ReviewError(ValueError):
-    """审议业务规则冲突（如灵感已完结、会话状态不允许操作）。"""
+    """打磨业务规则冲突（如会话状态不允许操作）。"""
 
 
-def open_review_session(db: Session, inspiration: Inspiration) -> ReviewSession:
-    """对一条灵感开启（或恢复）审议会话，并把灵感置为 in_review。"""
-    if inspiration.status in INSPIRATION_FINAL_STATUSES:
-        raise ReviewError(f"灵感 #{inspiration.id} 已审议完结，不得再次审议")
+class UndoFloorError(ReviewError):
+    """撤销地板：观点跳过提炼（录入即为观点且无 distill 消息），
+    polish → distill 无更早阶段可回退。"""
+
+
+def latest_phase_map(db: Session, viewpoint_ids: set[int]) -> dict[int, str]:
+    """viewpoint_id → 该观点最近一条非 completed 会话（active/paused）的 phase。
+
+    无进行中/挂起会话的观点不在映射中（调用方兜底 'distill'）；
+    同一观点多条会话按会话 id 取最近一条。
+    """
+    if not viewpoint_ids:
+        return {}
+    result: dict[int, str] = {}
+    for session in db.scalars(
+        select(ReviewSession)
+        .where(
+            ReviewSession.viewpoint_id.in_(viewpoint_ids),
+            ReviewSession.status.in_(["active", "paused"]),
+        )
+        .order_by(ReviewSession.id)
+    ):
+        result[session.viewpoint_id] = session.phase or "polish"
+    return result
+
+
+def open_review_session(db: Session, viewpoint: Viewpoint) -> ReviewSession:
+    """对一条观点开启（或恢复）打磨会话。
+
+    新建会话默认进入提炼阶段（phase="distill"，docs/04 D9）；恢复的会话保留
+    其原有阶段。全站同时只允许一个 active 会话：开启/恢复本观点的会话前，
+    其他观点的 active 会话一律挂起（paused），再次进入对应观点时恢复。
+    已入库（accepted）的观点不得再开会话。
+    """
+    if viewpoint.status == "accepted":
+        raise ReviewError("已入库的观点不得再开会话")
+
+    others = db.scalars(
+        select(ReviewSession).where(
+            ReviewSession.viewpoint_id != viewpoint.id,
+            ReviewSession.status == "active",
+        )
+    ).all()
+    for other in others:
+        check_session_transition(other.status, "paused")
+        other.status = "paused"
 
     active = db.scalars(
         select(ReviewSession).where(
-            ReviewSession.inspiration_id == inspiration.id,
+            ReviewSession.viewpoint_id == viewpoint.id,
             ReviewSession.status == "active",
         )
     ).first()
     if active is not None:
+        if others:
+            db.commit()
         return active
 
     paused = db.scalars(
         select(ReviewSession)
         .where(
-            ReviewSession.inspiration_id == inspiration.id,
+            ReviewSession.viewpoint_id == viewpoint.id,
             ReviewSession.status == "paused",
         )
         .order_by(ReviewSession.id.desc())
@@ -65,30 +126,115 @@ def open_review_session(db: Session, inspiration: Inspiration) -> ReviewSession:
     if paused is not None:
         check_session_transition(paused.status, "active")
         paused.status = "active"
-        if inspiration.status == "pending":
-            check_inspiration_transition(inspiration.status, "in_review")
-            inspiration.status = "in_review"
         db.commit()
         return paused
 
-    if inspiration.status == "pending":
-        check_inspiration_transition(inspiration.status, "in_review")
-        inspiration.status = "in_review"
-    session = ReviewSession(inspiration_id=inspiration.id, status="active")
+    # started_at 显式赋值：迁移重建的表缺 server_default（db.py 整表重建手写 DDL
+    # 不含 DEFAULT CURRENT_TIMESTAMP），不能依赖数据库默认值
+    session = ReviewSession(
+        viewpoint_id=viewpoint.id, status="active", phase="distill",
+        started_at=utcnow(),
+    )
     db.add(session)
     db.commit()
     db.refresh(session)
     return session
 
 
-DECISION_TYPES = {"accept", "accept_modified", "reject", "defer"}
+def _require_active(session: ReviewSession, action: str) -> None:
+    if session.status != "active":
+        raise ReviewError(f"会话不在进行中（当前状态：{session.status}），无法{action}")
+
+
+def undo_last_message(db: Session, session: ReviewSession) -> ReviewSession:
+    """消息级撤销：只删当前 phase 的最后一条消息（只删不回、不跨阶段）。
+
+    删掉的是 assistant 且新的同 phase 末条是 user 时，再删该 user 条
+    （一次撤销 = 一轮对话或一条落单消息）；无同 phase 消息时不动。
+    不产生 AI 调用，ai_calls 不留痕。
+    """
+    _require_active(session, "撤销")
+    phase = session.phase or "polish"
+    last = db.scalars(
+        select(ReviewMessage)
+        .where(ReviewMessage.session_id == session.id, ReviewMessage.phase == phase)
+        .order_by(ReviewMessage.id.desc())
+        .limit(1)
+    ).first()
+    if last is None:
+        return session
+    deleted_role = last.role
+    db.delete(last)
+    db.flush()
+    if deleted_role == "assistant":
+        new_last = db.scalars(
+            select(ReviewMessage)
+            .where(ReviewMessage.session_id == session.id, ReviewMessage.phase == phase)
+            .order_by(ReviewMessage.id.desc())
+            .limit(1)
+        ).first()
+        if new_last is not None and new_last.role == "user":
+            db.delete(new_last)
+    db.commit()
+    return session
+
+
+def undo_phase(db: Session, session: ReviewSession) -> ReviewSession:
+    """阶段级回退：polish → distill；distill → 重置到提炼最开始。
+
+    polish → distill：分析（含英文版）置空，删除全部 phase='polish' 消息，观点正文不动；
+    distill → 重置：删除全部消息，观点正文与双语版本恢复为关联灵感原文
+    （无关联灵感时正文不动）。
+
+    撤销地板：观点 is_viewpoint 为 true（录入即判定为观点、跳过了提炼环节）
+    且会话无任何 distill 消息时，polish → distill 回退抛 UndoFloorError；
+    is_viewpoint 为 NULL/False（旧数据或未判定为观点）不受影响。
+    """
+    _require_active(session, "阶段回退")
+    viewpoint = db.get(Viewpoint, session.viewpoint_id)
+    if session.phase == "polish":
+        if viewpoint is not None and viewpoint.is_viewpoint:
+            has_distill = db.scalar(
+                select(ReviewMessage.id)
+                .where(
+                    ReviewMessage.session_id == session.id,
+                    ReviewMessage.phase == "distill",
+                )
+                .limit(1)
+            )
+            if has_distill is None:
+                raise UndoFloorError("该观点跳过了提炼环节，撤销到打磨开始为止")
+        session.phase = "distill"
+        session.analysis_json = None
+        session.analysis_json_en = None
+        db.query(ReviewMessage).where(
+            ReviewMessage.session_id == session.id,
+            ReviewMessage.phase == "polish",
+        ).delete(synchronize_session=False)
+    else:
+        # distill → 重置：清空全部消息，观点正文恢复为关联灵感原文
+        db.query(ReviewMessage).where(
+            ReviewMessage.session_id == session.id
+        ).delete(synchronize_session=False)
+        if viewpoint is not None and viewpoint.source_inspiration_id is not None:
+            inspiration = db.get(Inspiration, viewpoint.source_inspiration_id)
+            if inspiration is not None:
+                viewpoint.content = inspiration.content
+                viewpoint.content_zh = inspiration.content_zh
+                viewpoint.content_en = inspiration.content_en
+                viewpoint.original_lang = inspiration.original_lang
+    db.commit()
+    return session
+
+
+DECISION_TYPES = {"accept"}
 
 RELATION_TYPES = {"similar", "conflict"}
 
 
 @dataclass
 class DecisionOutcome:
-    """决策落库结果。暂缓不产生决策记录与观点，两字段均为 None。"""
+    """决策落库结果。"""
 
     decision: ReviewDecision | None
     viewpoint: Viewpoint | None
@@ -114,85 +260,57 @@ def apply_review_decision(
     bilingual: dict | None = None,
     decision_type: str,
     final_content: str | None = None,
+    title_zh: str | None = None,
+    title_en: str | None = None,
     reason: str | None = None,
     layer: str | None = None,
     tags: AnalysisTags | None = None,
     relations: list[AnalysisRelation] | None = None,
 ) -> DecisionOutcome:
-    """落实审议决策。采纳/否定在一个数据库事务内完成，任一步失败整体回滚。
+    """落实打磨决策（仅采纳）：一个事务内完成，任一步失败整体回滚。
 
+    bilingual 为正文变化时由路由层重新双语化的结果（含 original_lang）；
+    标题由路由层在请求缺省时用 make_titles 生成后传入。
     业务规则冲突抛出 ReviewError；其余异常回滚后原样抛出。
     """
     if decision_type not in DECISION_TYPES:
         raise ReviewError(f"非法决策类型：{decision_type}")
-    if session.status != "active":
-        raise ReviewError(f"会话不在进行中（当前状态：{session.status}），无法提交决策")
-    inspiration = db.get(Inspiration, session.inspiration_id)
-
+    _require_active(session, "提交决策")
+    viewpoint = db.get(Viewpoint, session.viewpoint_id)
+    if viewpoint is None:
+        raise ReviewError(f"会话关联的观点不存在：#{session.viewpoint_id}")
+    content = final_content.strip() if final_content else ""
+    if not content:
+        raise ReviewError("采纳必须给出最终正文")
+    layer_code = _normalize_layer(layer)
+    tags = tags or AnalysisTags()
     try:
-        if decision_type == "defer":
-            check_session_transition(session.status, "paused")
-            session.status = "paused"
-            check_inspiration_transition(inspiration.status, "pending")
-            inspiration.status = "pending"
-            db.commit()
-            return DecisionOutcome(decision=None, viewpoint=None)
-
-        if decision_type == "reject":
-            if reason is None or not reason.strip():
-                raise ReviewError("否定必须填写理由")
-            decision = ReviewDecision(
-                session_id=session.id,
-                decision_type=decision_type,
-                reason=reason.strip(),
-            )
-            db.add(decision)
-            check_session_transition(session.status, "completed")
-            session.status = "completed"
-            session.ended_at = utcnow()
-            check_inspiration_transition(inspiration.status, "rejected")
-            inspiration.status = "rejected"
-            db.commit()
-            db.refresh(decision)
-            return DecisionOutcome(decision=decision, viewpoint=None)
-
-        # accept / accept_modified
-        content = final_content.strip() if final_content else None
-        if decision_type == "accept_modified" and not content:
-            raise ReviewError("修改后采纳必须给出最终正文")
-        if not content:
-            content = inspiration.content
-        layer_code = _normalize_layer(layer)
-        tags = tags or AnalysisTags()
-        try:
-            validate_tags(
-                domain=tags.domain,
-                circle=tags.circle,
-                discipline=tags.discipline,
-                scene=tags.scene,
-            )
-        except InvalidTagError as exc:
-            raise ReviewError(str(exc)) from exc
-
-        viewpoint = Viewpoint(
-            type="raw",
-            content=content,
-            title_zh=inspiration.title_zh,
-            title_en=inspiration.title_en,
-            **(bilingual or {}),
-            source_inspiration_id=inspiration.id,
-            source_date=inspiration.source_date,
-            layer=layer_code,
+        validate_tags(
             domain=tags.domain,
             circle=tags.circle,
             discipline=tags.discipline,
             scene=tags.scene,
-            status="accepted",
         )
-        db.add(viewpoint)
+    except InvalidTagError as exc:
+        raise ReviewError(str(exc)) from exc
+
+    try:
+        check_viewpoint_transition(viewpoint.status, "accepted")
+        viewpoint.content = content
+        if bilingual:
+            viewpoint.content_zh = bilingual.get("content_zh")
+            viewpoint.content_en = bilingual.get("content_en")
+            viewpoint.original_lang = bilingual.get("original_lang") or viewpoint.original_lang
+        viewpoint.title_zh = title_zh
+        viewpoint.title_en = title_en
+        viewpoint.layer = layer_code
+        viewpoint.domain = tags.domain
+        viewpoint.circle = tags.circle
+        viewpoint.discipline = tags.discipline
+        viewpoint.scene = tags.scene
+        viewpoint.status = "accepted"
         db.flush()
 
-        has_conflict = False
         for relation in relations or []:
             if relation.type not in RELATION_TYPES:
                 raise ReviewError(f"非法关系类型：{relation.type}")
@@ -201,10 +319,7 @@ def apply_review_decision(
             target = db.get(Viewpoint, relation.viewpoint_id)
             if target is None:
                 raise ReviewError(f"关系目标观点不存在：#{relation.viewpoint_id}")
-            if target.status == "rejected":
-                raise ReviewError(
-                    f"不能与被否定的观点建立关系：#{relation.viewpoint_id}"
-                )
+            # 只建行：冲突/相近均不联动双方状态
             db.add(
                 ViewpointRelation(
                     from_viewpoint_id=viewpoint.id,
@@ -212,28 +327,17 @@ def apply_review_decision(
                     relation_type=relation.type,
                 )
             )
-            if relation.type == "conflict":
-                has_conflict = True
-                if target.status == "accepted":
-                    check_viewpoint_transition(target.status, "suspended")
-                    target.status = "suspended"
-        if has_conflict:
-            check_viewpoint_transition(viewpoint.status, "suspended")
-            viewpoint.status = "suspended"
 
         decision = ReviewDecision(
             session_id=session.id,
             decision_type=decision_type,
-            final_content=content,
+            final_content=viewpoint.content,
             reason=reason.strip() if reason else None,
         )
         db.add(decision)
         check_session_transition(session.status, "completed")
         session.status = "completed"
         session.ended_at = utcnow()
-        session.viewpoint_id = viewpoint.id
-        check_inspiration_transition(inspiration.status, "reviewed")
-        inspiration.status = "reviewed"
         db.commit()
         db.refresh(decision)
         db.refresh(viewpoint)
@@ -241,3 +345,48 @@ def apply_review_decision(
     except Exception:
         db.rollback()
         raise
+
+
+def withdraw_viewpoint(db: Session, viewpoint: Viewpoint) -> Viewpoint:
+    """集思录撤回：accepted → draft，重开该观点最近一条 completed 会话。
+
+    重开的会话阶段与分析、消息原样保留（completed → active）；该会话的采纳
+    决策行随撤回作废删除。无 completed 会话则不处理会话。
+    全站单 active 不变式与开会话一致：重开前其他观点的 active 会话挂起。
+    仅 accepted 可撤回，否则抛 InvalidTransitionError。
+    """
+    if viewpoint.status != "accepted":
+        raise InvalidTransitionError(f"仅已入库的观点可撤回（当前状态：{viewpoint.status}）")
+    check_viewpoint_transition(viewpoint.status, "draft")
+    viewpoint.status = "draft"
+
+    session = db.scalars(
+        select(ReviewSession)
+        .where(
+            ReviewSession.viewpoint_id == viewpoint.id,
+            ReviewSession.status == "completed",
+        )
+        .order_by(ReviewSession.id.desc())
+        .limit(1)
+    ).first()
+    if session is not None:
+        others = db.scalars(
+            select(ReviewSession).where(
+                ReviewSession.viewpoint_id != viewpoint.id,
+                ReviewSession.status == "active",
+            )
+        ).all()
+        for other in others:
+            check_session_transition(other.status, "paused")
+            other.status = "paused"
+        check_session_transition(session.status, "active")
+        session.status = "active"
+        session.ended_at = None
+        # 采纳决策随撤回作废
+        db.query(ReviewDecision).where(
+            ReviewDecision.session_id == session.id,
+            ReviewDecision.decision_type == "accept",
+        ).delete(synchronize_session=False)
+    db.commit()
+    db.refresh(viewpoint)
+    return viewpoint

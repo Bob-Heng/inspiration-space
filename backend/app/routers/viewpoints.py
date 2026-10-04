@@ -1,4 +1,9 @@
-"""观点库接口：组合筛选列表（TASK-013）、关系/合并/拆分/状态变更与留痕（TASK-014）。"""
+"""观点库接口：组合筛选列表（TASK-013，只收已采纳）、关系、撤回与标题更新。
+
+合并/拆分/操作留痕已删除；显式状态变更端点已删除——状态只由打磨决策
+（draft → accepted）与撤回（accepted → draft）改变。建立关系只记关系行，
+不联动任何状态（含冲突）。
+"""
 
 import json
 from datetime import date
@@ -9,39 +14,32 @@ from sqlalchemy.orm import Session
 
 from ..auth import require_user
 from ..db import get_db
+from ..errors import biz_error
+from ..domain.review import withdraw_viewpoint
 from ..domain.tags import InvalidTagError, validate_tag
+from ..domain.viewpoint_state import InvalidTransitionError
 from ..domain.viewpoints import (
     ViewpointOpError,
-    change_viewpoint_status,
     classified_viewpoints,
+    conflict_display_map,
     create_relation,
     delete_relation,
-    list_events,
     list_relations,
-    merge_viewpoints,
     query_viewpoints,
-    split_viewpoint,
 )
 from ..models import (
     ReviewDecision,
     ReviewMessage,
     ReviewSession,
     Viewpoint,
-    ViewpointEvent,
 )
 from ..schemas import (
     ClassifiedOut,
     LayerCode,
-    MergeOut,
-    MergeRequest,
     RelationCreate,
     RelationOut,
-    SplitOut,
-    SplitRequest,
-    StatusChangeRequest,
-    ViewpointEventOut,
     ViewpointOut,
-    ViewpointStatus,
+    ViewpointTitleUpdate,
 )
 
 router = APIRouter(
@@ -71,23 +69,23 @@ def _conflict_409(exc: ViewpointOpError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
-def _event_out(event: ViewpointEvent) -> ViewpointEventOut:
-    return ViewpointEventOut(
-        id=event.id,
-        viewpoint_id=event.viewpoint_id,
-        event_type=event.event_type,
-        from_status=event.from_status,
-        to_status=event.to_status,
-        reason=event.reason,
-        detail=json.loads(event.detail) if event.detail else None,
-        created_at=event.created_at,
-    )
+def _with_conflicts(db: Session, viewpoints: list[Viewpoint]) -> list[ViewpointOut]:
+    """批量组装 ViewpointOut 并附上 conflict_with（冲突对方展示编号，无冲突为 []）。
+
+    仅集思录列表/分类视图使用；其他场景不调用，conflict_with 保持默认 None。
+    """
+    conflicts = conflict_display_map(db, {v.id for v in viewpoints})
+    result = []
+    for viewpoint in viewpoints:
+        out = ViewpointOut.model_validate(viewpoint)
+        out.conflict_with = conflicts.get(viewpoint.id, [])
+        result.append(out)
+    return result
 
 
 @router.get("", response_model=list[ViewpointOut])
 def list_viewpoints(
     layer: LayerCode | None = Query(default=None),
-    status_filter: ViewpointStatus | None = Query(default=None, alias="status"),
     domain: str | None = Query(default=None),
     circle: str | None = Query(default=None),
     discipline: str | None = Query(default=None),
@@ -96,8 +94,9 @@ def list_viewpoints(
     date_to: date | None = Query(default=None),
     keyword: str | None = Query(default=None),
     db: Session = Depends(get_db),
-) -> list[Viewpoint]:
-    """观点列表：分层/状态/四标签族/来源日期区间/关键词组合筛选。"""
+) -> list[ViewpointOut]:
+    """观点列表（集思录）：只收已采纳；分层/四标签族/来源日期区间/关键词组合筛选。
+    每项附 conflict_with（冲突对方展示编号，供冲突标记渲染）。"""
     for family, value in (
         ("domain", domain),
         ("circle", circle),
@@ -105,10 +104,10 @@ def list_viewpoints(
         ("scene", scene),
     ):
         _validate_tag_filter(family, value)
-    return query_viewpoints(
+    viewpoints = query_viewpoints(
         db,
         layer=layer,
-        status=status_filter,
+        status="accepted",
         domain=domain,
         circle=circle,
         discipline=discipline,
@@ -117,12 +116,26 @@ def list_viewpoints(
         date_to=date_to,
         keyword=keyword,
     )
+    return _with_conflicts(db, viewpoints)
 
 
 @router.get("/classified", response_model=ClassifiedOut)
-def get_classified(db: Session = Depends(get_db)) -> dict[str, list[Viewpoint]]:
-    """分类观点视图：道/法/术三组，排除已否定，悬置保留，组内按来源日期排序。"""
-    return classified_viewpoints(db)
+def get_classified(db: Session = Depends(get_db)) -> ClassifiedOut:
+    """分类观点视图：道/法/术三组，只收已采纳，组内按来源日期排序。
+    每项附 conflict_with（冲突对方展示编号，供冲突标记渲染）。"""
+    groups = classified_viewpoints(db)
+    conflicts = conflict_display_map(
+        db, {v.id for group in groups.values() for v in group}
+    )
+    result = {}
+    for layer, group in groups.items():
+        items = []
+        for viewpoint in group:
+            out = ViewpointOut.model_validate(viewpoint)
+            out.conflict_with = conflicts.get(viewpoint.id, [])
+            items.append(out)
+        result[layer] = items
+    return ClassifiedOut(**result)
 
 
 @router.get("/{viewpoint_id}", response_model=ViewpointOut)
@@ -213,7 +226,7 @@ def get_relations(viewpoint_id: int, db: Session = Depends(get_db)) -> list[Rela
 def post_relation(
     viewpoint_id: int, payload: RelationCreate, db: Session = Depends(get_db)
 ) -> RelationOut:
-    """建立关系。建立冲突时双方自动转悬置并互记编号。"""
+    """建立关系。只记关系行，不联动变更任何状态。"""
     viewpoint = _get_or_404(viewpoint_id, db)
     try:
         relation = create_relation(
@@ -234,7 +247,7 @@ def post_relation(
 def remove_relation(
     viewpoint_id: int, relation_id: int, db: Session = Depends(get_db)
 ) -> dict:
-    """解除关系。解除冲突不自动恢复状态，悬置的解除需显式状态操作。"""
+    """解除关系。不自动恢复任何状态。"""
     _get_or_404(viewpoint_id, db)
     try:
         delete_relation(db, viewpoint_id, relation_id)
@@ -245,64 +258,31 @@ def remove_relation(
     return {"deleted_id": relation_id}
 
 
-@router.post("/{viewpoint_id}/merge", response_model=MergeOut)
-def post_merge(
-    viewpoint_id: int, payload: MergeRequest, db: Session = Depends(get_db)
-) -> MergeOut:
-    """把另一条观点合并进本观点：正文无损接续，被合并方转否定留档。"""
-    survivor = _get_or_404(viewpoint_id, db)
-    try:
-        survivor, absorbed = merge_viewpoints(
-            db,
-            survivor,
-            payload.absorbed_id,
-            merged_content=payload.merged_content,
-            reason=payload.reason,
-        )
-    except ViewpointOpError as exc:
-        raise _conflict_409(exc) from exc
-    return MergeOut(
-        survivor=ViewpointOut.model_validate(survivor),
-        absorbed=ViewpointOut.model_validate(absorbed),
-    )
-
-
-@router.post("/{viewpoint_id}/split", response_model=SplitOut)
-def post_split(
-    viewpoint_id: int, payload: SplitRequest, db: Session = Depends(get_db)
-) -> SplitOut:
-    """把本观点拆为多条：原观点转否定记原因，新观点继承分层/标签/来源。"""
+@router.post("/{viewpoint_id}/withdraw", response_model=ViewpointOut)
+def withdraw(viewpoint_id: int, db: Session = Depends(get_db)) -> Viewpoint:
+    """集思录撤回：accepted → draft；重开该观点最近一条 completed 会话
+    （阶段/分析/消息原样保留），该会话的采纳决策行随撤回作废删除。
+    草稿观点重新出现在他山坊队列。仅 accepted 可撤回。"""
     viewpoint = _get_or_404(viewpoint_id, db)
     try:
-        original, new_viewpoints = split_viewpoint(
-            db, viewpoint, payload.parts, reason=payload.reason
-        )
-    except ViewpointOpError as exc:
-        raise _conflict_409(exc) from exc
-    return SplitOut(
-        original=ViewpointOut.model_validate(original),
-        new_viewpoints=[ViewpointOut.model_validate(v) for v in new_viewpoints],
-    )
+        return withdraw_viewpoint(db, viewpoint)
+    except InvalidTransitionError as exc:
+        raise biz_error(
+            409, "withdraw_conflict", str(exc),
+            "Only an accepted viewpoint can be withdrawn",
+        ) from exc
 
 
-@router.patch("/{viewpoint_id}/status", response_model=ViewpointOut)
-def patch_status(
-    viewpoint_id: int, payload: StatusChangeRequest, db: Session = Depends(get_db)
+@router.patch("/{viewpoint_id}/title", response_model=ViewpointOut)
+def patch_title(
+    viewpoint_id: int, payload: ViewpointTitleUpdate, db: Session = Depends(get_db)
 ) -> Viewpoint:
-    """显式状态变更：悬置/恢复/否定（否定必须填写理由），写留痕。"""
+    """观点标题更新：两字段独立可空更新（缺省语种不动），全空 422。"""
     viewpoint = _get_or_404(viewpoint_id, db)
-    try:
-        return change_viewpoint_status(
-            db, viewpoint, payload.to_status, reason=payload.reason
-        )
-    except ViewpointOpError as exc:
-        raise _conflict_409(exc) from exc
-
-
-@router.get("/{viewpoint_id}/history", response_model=list[ViewpointEventOut])
-def get_history(
-    viewpoint_id: int, db: Session = Depends(get_db)
-) -> list[ViewpointEventOut]:
-    """某观点的写操作留痕（合并/拆分/状态变更/冲突联动），按时间升序。"""
-    _get_or_404(viewpoint_id, db)
-    return [_event_out(event) for event in list_events(db, viewpoint_id)]
+    if payload.title_zh is not None:
+        viewpoint.title_zh = payload.title_zh.strip() or None
+    if payload.title_en is not None:
+        viewpoint.title_en = payload.title_en.strip() or None
+    db.commit()
+    db.refresh(viewpoint)
+    return viewpoint

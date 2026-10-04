@@ -9,6 +9,7 @@ export class ApiError extends Error {
 }
 
 async function request(path, options = {}) {
+  const lang = localStorage.getItem('inspiration_lang') || 'zh'
   let res
   try {
     res = await fetch(BASE_URL + path, {
@@ -16,7 +17,12 @@ async function request(path, options = {}) {
       ...options,
     })
   } catch {
-    throw new ApiError(0, '无法连接后端，请确认后端已启动（可双击 启动.bat）')
+    throw new ApiError(
+      0,
+      lang === 'en'
+        ? 'Cannot reach the backend. Please make sure it is running (double-click 启动.bat).'
+        : '无法连接后端，请确认后端已启动（可双击 启动.bat）',
+    )
   }
   if (res.status === 204) return null
   const data = await res.json().catch(() => null)
@@ -24,10 +30,12 @@ async function request(path, options = {}) {
     let detail = data?.detail
     // 双语错误：detail 为 { code, zh, en } 时按界面语言取值（api.js 不在组件树，直读 localStorage）
     if (detail && typeof detail === 'object') {
-      const lang = localStorage.getItem('inspiration_lang') || 'zh'
       detail = detail[lang] ?? detail.zh
     }
-    throw new ApiError(res.status, detail ?? `请求失败（${res.status}）`)
+    throw new ApiError(
+      res.status,
+      detail ?? (lang === 'en' ? `Request failed (${res.status})` : `请求失败（${res.status}）`),
+    )
   }
   return data
 }
@@ -107,21 +115,50 @@ export const api = {
     })
   },
 
-  analyzeInspiration: (id) =>
-    request(`/api/inspirations/${id}/analysis`, { method: 'POST' }),
+  // 分析对象为他山坊当前观点（viewpoints 表内容）；reset 时后端先清空打磨阶段对话再生成
+  analyzeViewpoint: (id, reset = false) =>
+    request(`/api/viewpoints/${id}/analysis${reset ? '?reset=1' : ''}`, { method: 'POST' }),
 
-  postOpeningQuestion(sessionId, regenerate = false) {
-    const qs = regenerate ? '?regenerate=true' : ''
-    return request(`/api/review/sessions/${sessionId}/opening${qs}`, { method: 'POST' })
+  suggestTitle(content) {
+    return request('/api/ai/title-suggestion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    })
   },
-  startReviewSession(inspirationId) {
+
+  checkViewpoint: (sessionId) =>
+    request(`/api/review/sessions/${sessionId}/viewpoint-check`, { method: 'POST' }),
+  enterPolish(sessionId, draft) {
+    return request(`/api/review/sessions/${sessionId}/enter-polish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ draft }),
+    })
+  },
+
+  postOpeningQuestion(sessionId, regenerate = false, polishEntry = false) {
+    const params = new URLSearchParams()
+    if (regenerate) params.set('regenerate', 'true')
+    if (polishEntry) params.set('polish_entry', 'true')
+    const qs = params.toString()
+    return request(`/api/review/sessions/${sessionId}/opening${qs ? `?${qs}` : ''}`, { method: 'POST' })
+  },
+  getReviewQueue: () => request('/api/review/queue'),
+  startReviewSession(viewpointId) {
     return request('/api/review/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inspiration_id: inspirationId }),
+      body: JSON.stringify({ viewpoint_id: viewpointId }),
     })
   },
   getActiveSession: () => request('/api/review/sessions/active'),
+  // 消息级撤销：删当前阶段最后一条消息（AI 回复连同其用户提问）
+  undoReviewSession: (id) =>
+    request(`/api/review/sessions/${id}/undo`, { method: 'POST' }),
+  // 阶段级回退：polish→distill 清分析与打磨消息；distill→重置清空并恢复观点原文
+  undoReviewPhase: (id) =>
+    request(`/api/review/sessions/${id}/undo-phase`, { method: 'POST' }),
   sendReviewMessage(id, payload) {
     return request(`/api/review/sessions/${id}/messages`, {
       method: 'POST',
@@ -160,28 +197,16 @@ export const api = {
       method: 'DELETE',
     })
   },
-  mergeViewpoint(id, payload) {
-    return request(`/api/viewpoints/${id}/merge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-  },
-  splitViewpoint(id, payload) {
-    return request(`/api/viewpoints/${id}/split`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-  },
-  updateViewpointStatus(id, payload) {
-    return request(`/api/viewpoints/${id}/status`, {
+  // 撤回：accepted → draft，观点回他山坊打磨队列（会话重开回打磨最后状态）
+  withdrawViewpoint: (id) =>
+    request(`/api/viewpoints/${id}/withdraw`, { method: 'POST' }),
+  updateViewpointTitle(id, payload) {
+    return request(`/api/viewpoints/${id}/title`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
   },
-  getViewpointHistory: (id) => request(`/api/viewpoints/${id}/history`),
   getReviewHistory: (id) => request(`/api/viewpoints/${id}/review-history`),
   getClassifiedViewpoints: () => request('/api/viewpoints/classified'),
 

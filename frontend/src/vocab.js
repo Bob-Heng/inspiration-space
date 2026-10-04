@@ -1,12 +1,5 @@
 import { LAYER_EN, STRINGS, TAG_EN } from './i18n'
 
-export const STATUS_LABELS = {
-  pending: '待审议',
-  in_review: '审议中',
-  reviewed: '已审议',
-  rejected: '已否定',
-}
-
 export const LAYER_OPTIONS = ['道', '法', '术']
 
 export const LAYER_LABELS = { dao: '道', fa: '法', shu: '术' }
@@ -37,20 +30,7 @@ export const SCENE_OPTIONS = [
   '其他',
 ]
 
-export const VIEWPOINT_STATUS_LABELS = {
-  accepted: '已采纳',
-  suspended: '已悬置',
-  rejected: '已否定',
-}
-
 export const RELATION_LABELS = { similar: '相近', conflict: '冲突', related: '相关' }
-
-export const EVENT_TYPE_LABELS = {
-  status_change: '状态变更',
-  conflict_suspend: '冲突悬置',
-  merge: '合并',
-  split: '拆分',
-}
 
 // ---- 语言感知辅助（lang = 'zh' | 'en'） ----
 export function layerLabel(code, lang) {
@@ -64,10 +44,6 @@ export function statusLabel(status, lang) {
 
 export function relationLabel(type, lang) {
   return STRINGS[lang]?.relationLabels?.[type] ?? type
-}
-
-export function eventLabel(type, lang) {
-  return STRINGS[lang]?.eventLabels?.[type] ?? type
 }
 
 /** 标签值入库为中文；英文界面仅翻译显示 */

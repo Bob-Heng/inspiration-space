@@ -36,12 +36,18 @@ def _docx_response(content: bytes, filename: str) -> Response:
 
 @router.get("/viewpoints")
 def export_viewpoints(db: Session = Depends(get_db)) -> Response:
-    """导出原始观点.docx：全部观点（含悬置/否定，保留标记），按库内编号排序。"""
-    viewpoints = list(db.scalars(select(Viewpoint).order_by(Viewpoint.id)))
+    """导出原始观点.docx：已采纳观点（draft 打磨中不导出），按库内编号排序。"""
+    viewpoints = list(
+        db.scalars(
+            select(Viewpoint)
+            .where(Viewpoint.status == "accepted")
+            .order_by(Viewpoint.id)
+        )
+    )
     return _docx_response(build_viewpoints_docx(viewpoints), "原始观点.docx")
 
 
 @router.get("/classified")
 def export_classified(db: Session = Depends(get_db)) -> Response:
-    """导出分类观点.docx：道/法/术三节，已否定不列入，悬置保留标记，组内按来源日期排序。"""
+    """导出分类观点.docx：道/法/术三节，只收已采纳，组内按来源日期排序。"""
     return _docx_response(build_classified_docx(classified_viewpoints(db)), "分类观点.docx")

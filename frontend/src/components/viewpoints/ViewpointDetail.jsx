@@ -5,61 +5,36 @@ import TranslatedText from '../TranslatedText'
 import { useLang } from '../../i18n'
 import {
   RELATION_LABELS,
-  eventLabel,
   formatDateTime,
   layerLabel,
   relationLabel,
-  statusLabel,
   summarize,
   tagLine,
 } from '../../vocab'
-
-function autoMergeContent(survivor, absorbed) {
-  if (survivor.includes(absorbed)) return survivor
-  if (absorbed.includes(survivor)) return absorbed
-  return `${survivor}\n${absorbed}`
-}
-
-function relationDetail(detail, tf, lang) {
-  if (!detail) return null
-  if (detail.conflict_with) return tf('relConflictWith', { id: detail.conflict_with })
-  if (detail.merged_into) return tf('relMergedInto', { id: detail.merged_into })
-  if (detail.absorbed_id) return tf('relAbsorbed', { id: detail.absorbed_id })
-  if (detail.split_from) return tf('relSplitFrom', { id: detail.split_from })
-  if (detail.new_viewpoint_ids)
-    return tf('relSplitInto', {
-      ids: detail.new_viewpoint_ids
-        .map((id) => `#${id}`)
-        .join(lang === 'en' ? ', ' : '、'),
-    })
-  return null
-}
 
 export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
   const { t, tf, lang } = useLang()
   const [viewpoint, setViewpoint] = useState(null)
   const [inspiration, setInspiration] = useState(null)
   const [relations, setRelations] = useState([])
-  const [history, setHistory] = useState([])
   const [review, setReview] = useState(null)
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
   const [relationForm, setRelationForm] = useState({ targetId: '', type: 'similar' })
-  const [mergeForm, setMergeForm] = useState({ targetId: '', reason: '', content: '' })
-  const [splitForm, setSplitForm] = useState({ text: '', reason: '' })
-  const [rejectForm, setRejectForm] = useState({ open: false, reason: '' })
+  const [titleEditing, setTitleEditing] = useState(false)
+  const [titleForm, setTitleForm] = useState({ zh: '', en: '' })
+  const [titleError, setTitleError] = useState(null)
+  const [titleSaving, setTitleSaving] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const [detail, relationList, eventList, reviewHistory] = await Promise.all([
+      const [detail, relationList, reviewHistory] = await Promise.all([
         api.getViewpoint(viewpointId),
         api.listViewpointRelations(viewpointId),
-        api.getViewpointHistory(viewpointId),
         api.getReviewHistory(viewpointId),
       ])
       setViewpoint(detail)
       setRelations(relationList)
-      setHistory(eventList)
       setReview(reviewHistory?.exists ? reviewHistory : null)
       setError(null)
       if (detail.source_inspiration_id) {
@@ -95,10 +70,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
     e.preventDefault()
     const targetId = Number(relationForm.targetId)
     if (!targetId) return
-    if (
-      relationForm.type === 'conflict' &&
-      !window.confirm(tf('confirmConflict', { a: viewpointId, b: targetId }))
-    ) {
+    if (relationForm.type === 'conflict' && !window.confirm(t('confirmConflict'))) {
       return
     }
     run(
@@ -115,124 +87,66 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
   }
 
   function handleDeleteRelation(relation) {
-    const extra =
-      relation.relation_type === 'conflict' ? t('confirmUnlinkConflictExtra') : ''
-    if (!window.confirm(tf('confirmUnlink', { id: relation.viewpoint.id, extra })))
-      return
+    if (!window.confirm(tf('confirmUnlink', { id: relation.viewpoint.source_inspiration_id ?? relation.viewpoint.id }))) return
     run(
       () => api.deleteViewpointRelation(viewpointId, relation.id),
       t('noticeRelationRemoved'),
     )
   }
 
-  function handleSuspend() {
-    if (!window.confirm(t('confirmSuspend'))) return
-    run(
-      () => api.updateViewpointStatus(viewpointId, { to_status: 'suspended' }),
-      statusLabel('suspended', lang),
-    )
+  // 撤回：accepted → draft，回他山坊打磨队列（详情保留展示，操作区随之收起）
+  function handleWithdraw() {
+    if (!window.confirm(t('withdrawConfirm'))) return
+    run(() => api.withdrawViewpoint(viewpointId), t('noticeWithdrawn'))
   }
 
-  function handleRestore() {
-    if (!window.confirm(t('confirmRestore'))) return
-    run(
-      () => api.updateViewpointStatus(viewpointId, { to_status: 'accepted' }),
-      t('noticeRestored'),
-    )
+  function openTitleEdit() {
+    setTitleForm({
+      zh: viewpoint?.title_zh ?? '',
+      en: viewpoint?.title_en ?? '',
+    })
+    setTitleError(null)
+    setTitleEditing(true)
   }
 
-  function handleReject(e) {
+  async function handleTitleSave(e) {
     e.preventDefault()
-    if (!rejectForm.reason.trim()) return
-    if (!window.confirm(t('confirmRejectVp'))) return
-    run(
-      () =>
-        api.updateViewpointStatus(viewpointId, {
-          to_status: 'rejected',
-          reason: rejectForm.reason.trim(),
-        }),
-      statusLabel('rejected', lang),
-    )
-    setRejectForm({ open: false, reason: '' })
-  }
-
-  async function handlePrefillMerge() {
-    const targetId = Number(mergeForm.targetId)
-    if (!targetId || !viewpoint) return
+    const zh = titleForm.zh.trim()
+    const en = titleForm.en.trim()
+    if (!zh || !en) {
+      setTitleError(t('titleRequired'))
+      return
+    }
+    setTitleSaving(true)
+    setTitleError(null)
     try {
-      const other = await api.getViewpoint(targetId)
-      setMergeForm((f) => ({
-        ...f,
-        content: autoMergeContent(viewpoint.content, other.content),
-      }))
-      setError(null)
+      await api.updateViewpointTitle(viewpointId, { title_zh: zh, title_en: en })
+      setViewpoint((v) => (v ? { ...v, title_zh: zh, title_en: en } : v))
+      setTitleEditing(false)
     } catch (err) {
-      setError(err.message)
+      setTitleError(err.message)
+    } finally {
+      setTitleSaving(false)
     }
   }
 
-  function handleMerge(e) {
-    e.preventDefault()
-    const targetId = Number(mergeForm.targetId)
-    if (!targetId || !mergeForm.reason.trim()) return
-    if (!window.confirm(tf('confirmMerge', { target: targetId, id: viewpointId })))
-      return
-    run(
-      () =>
-        api.mergeViewpoint(viewpointId, {
-          absorbed_id: targetId,
-          merged_content: mergeForm.content.trim() || null,
-          reason: mergeForm.reason.trim(),
-        }),
-      tf('noticeMerged', { id: targetId }),
-    )
-    setMergeForm({ targetId: '', reason: '', content: '' })
-  }
-
-  const splitParts = splitForm.text
-    .split(/\n\s*\n/)
-    .map((part) => part.trim())
-    .filter(Boolean)
-
-  function handleSplit(e) {
-    e.preventDefault()
-    if (splitParts.length < 2 || !splitForm.reason.trim()) return
-    if (
-      !window.confirm(tf('confirmSplit', { n: splitParts.length, id: viewpointId }))
-    )
-      return
-    run(
-      () =>
-        api.splitViewpoint(viewpointId, {
-          parts: splitParts,
-          reason: splitForm.reason.trim(),
-        }),
-      tf('noticeSplit', { n: splitParts.length }),
-    )
-    setSplitForm({ text: '', reason: '' })
-  }
-
-  const editable = viewpoint && viewpoint.status !== 'rejected'
+  // 仅 accepted（集思录在库）可编辑关系/标题/撤回；撤回后变 draft 转为只读
+  const editable = viewpoint && viewpoint.status === 'accepted'
 
   return (
-    <div className="fixed inset-0 z-10 overflow-y-auto bg-slate-900/30 p-4">
-      <div className="mx-auto my-8 max-w-3xl rounded-lg bg-white p-6 shadow-xl">
+    <div className="ui-modal-mask fixed inset-0 z-10 overflow-y-auto p-4">
+      <div className="ui-card ui-modal mx-auto my-8 max-w-3xl p-6">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-sm text-slate-400">
+          <span className="font-mono text-sm text-accent">
             #{viewpoint?.source_inspiration_id ?? viewpointId}
           </span>
           {viewpoint && (
-            <>
-              <span className="text-sm text-slate-500">
-                {layerLabel(viewpoint.layer, lang) ?? t('unlayered')}
-              </span>
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
-                {statusLabel(viewpoint.status, lang)}
-              </span>
-            </>
+            <span className="text-sm text-ink-2">
+              {layerLabel(viewpoint.layer, lang) ?? t('unlayered')}
+            </span>
           )}
           <button
-            className="ml-auto text-sm text-slate-500 hover:text-slate-800"
+            className="ui-link ml-auto text-sm"
             onClick={onClose}
           >
             {t('close')}
@@ -240,25 +154,83 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
         </div>
 
         {notice && (
-          <p className="mt-3 rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+          <p className="mt-3 rounded-input bg-accent-soft px-3 py-2 text-sm text-accent">
             {notice}
           </p>
         )}
         {error && (
-          <p className="mt-3 rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          <p className="mt-3 rounded-input bg-danger-soft px-3 py-2 text-sm text-danger">
             {error}
           </p>
         )}
         {!viewpoint ? (
-          <p className="mt-6 text-sm text-slate-400">{t('loading')}</p>
+          <p className="mt-6 text-sm text-ink-3">{t('loading')}</p>
         ) : (
           <>
-            <ItemTitle
-              titleZh={viewpoint.title_zh}
-              titleEn={viewpoint.title_en}
-              id={viewpoint.id}
-            />
-            <p className="mt-4 whitespace-pre-wrap text-slate-800">
+            {titleEditing ? (
+              <form onSubmit={handleTitleSave} className="mt-2 space-y-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block text-xs text-ink-2">
+                    {t('titleZhLabel')}
+                    <input
+                      className="ui-input mt-1 w-full px-2 py-1.5 text-sm text-ink"
+                      value={titleForm.zh}
+                      onChange={(e) =>
+                        setTitleForm((f) => ({ ...f, zh: e.target.value }))
+                      }
+                      autoFocus
+                    />
+                  </label>
+                  <label className="block text-xs text-ink-2">
+                    {t('titleEnLabel')}
+                    <input
+                      className="ui-input mt-1 w-full px-2 py-1.5 text-sm text-ink"
+                      value={titleForm.en}
+                      onChange={(e) =>
+                        setTitleForm((f) => ({ ...f, en: e.target.value }))
+                      }
+                    />
+                  </label>
+                </div>
+                {titleError && <p className="text-sm text-danger">{titleError}</p>}
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    className="ui-btn-primary px-3 py-1 text-sm"
+                    disabled={titleSaving}
+                  >
+                    {t('save')}
+                  </button>
+                  <button
+                    type="button"
+                    className="ui-btn-ghost px-3 py-1 text-sm"
+                    disabled={titleSaving}
+                    onClick={() => setTitleEditing(false)}
+                  >
+                    {t('cancel')}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <ItemTitle
+                    titleZh={viewpoint.title_zh}
+                    titleEn={viewpoint.title_en}
+                    id={viewpoint.id}
+                  />
+                </div>
+                {editable && (
+                  <button
+                    className="ui-link shrink-0 text-sm"
+                    onClick={openTitleEdit}
+                  >
+                    {t('vpEditTitle')}
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="mt-4 whitespace-pre-wrap text-ink">
               <TranslatedText
                 contentZh={viewpoint.content_zh}
                 contentEn={viewpoint.content_en}
@@ -266,18 +238,18 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                 className="whitespace-pre-wrap"
               />
             </p>
-            <p className="mt-2 text-xs text-slate-500">
+            <p className="mt-2 text-xs text-ink-2">
               {tf('tagsLine', { v: tagLine(viewpoint, lang) || t('none') })} ·{' '}
               {tf('sourceDate', { date: viewpoint.source_date ?? '—' })} ·{' '}
               {tf('createdLine', { v: formatDateTime(viewpoint.created_at, lang) })} ·{' '}
               {tf('updatedLine', { v: formatDateTime(viewpoint.updated_at, lang) })}
             </p>
 
-            <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">{t('vpSourceInspiration')}</h3>
+            <section className="mt-6 border-t border-rule pt-4">
+              <h3 className="text-sm font-bold text-ink">{t('vpSourceInspiration')}</h3>
               {inspiration ? (
-                <div className="mt-2 rounded border border-slate-200 p-3 text-sm">
-                  <span className="font-mono text-xs text-slate-400">
+                <div className="mt-2 rounded-input border border-rule p-3 text-sm">
+                  <span className="font-mono text-xs text-accent">
                     #{inspiration.id}
                   </span>
                   <ItemTitle
@@ -285,7 +257,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                     titleEn={inspiration.title_en}
                     id={inspiration.id}
                   />
-                  <p className="mt-1 whitespace-pre-wrap text-slate-600">
+                  <p className="mt-1 whitespace-pre-wrap text-ink-2">
                     <TranslatedText
                       contentZh={inspiration.content_zh}
                       contentEn={inspiration.content_en}
@@ -294,7 +266,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                   </p>
                 </div>
               ) : (
-                <p className="mt-2 text-sm text-slate-400">
+                <p className="mt-2 text-sm text-ink-3">
                   {viewpoint.source_inspiration_id
                     ? t('vpSourceLoadFailed')
                     : t('vpNoSource')}
@@ -302,40 +274,37 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
               )}
             </section>
 
-            <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">{t('vpRelations')}</h3>
+            <section className="mt-6 border-t border-rule pt-4">
+              <h3 className="text-sm font-bold text-ink">{t('vpRelations')}</h3>
               {relations.length === 0 ? (
-                <p className="mt-2 text-sm text-slate-400">{t('vpNoRelations')}</p>
+                <p className="mt-2 text-sm text-ink-3">{t('vpNoRelations')}</p>
               ) : (
                 <ul className="mt-2 space-y-2">
                   {relations.map((relation) => (
                     <li
                       key={relation.id}
-                      className="flex items-start gap-2 rounded border border-slate-200 p-3 text-sm"
+                      className="flex items-start gap-2 rounded-input border border-rule p-3 text-sm"
                     >
                       <span
-                        className={`shrink-0 rounded px-1.5 py-0.5 text-xs ${
+                        className={`shrink-0 rounded-pill px-2 py-0.5 text-xs ${
                           relation.relation_type === 'conflict'
-                            ? 'bg-red-100 text-red-700'
-                            : 'bg-slate-200 text-slate-600'
+                            ? 'bg-danger-soft text-danger'
+                            : 'bg-paper-2 text-ink-2'
                         }`}
                       >
                         {relationLabel(relation.relation_type, lang)}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="font-mono text-xs text-slate-400">
-                          #{relation.viewpoint.id}
+                        <span className="font-mono text-xs text-accent">
+                          #{relation.viewpoint.source_inspiration_id ?? relation.viewpoint.id}
                         </span>
-                        <span className="ml-2 text-slate-800">
+                        <span className="ml-2 text-ink">
                           {summarize(relation.viewpoint.content, 50)}
-                        </span>
-                        <span className="ml-2 text-xs text-slate-500">
-                          {statusLabel(relation.viewpoint.status, lang)}
                         </span>
                       </span>
                       {editable && (
                         <button
-                          className="shrink-0 text-xs text-red-500 hover:text-red-700"
+                          className="ui-link-danger shrink-0 text-xs"
                           onClick={() => handleDeleteRelation(relation)}
                         >
                           {t('vpUnlink')}
@@ -348,7 +317,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
               {editable && (
                 <form onSubmit={handleCreateRelation} className="mt-3 flex items-center gap-2 text-sm">
                   <input
-                    className="w-28 rounded border border-slate-300 px-2 py-1.5"
+                    className="ui-input w-28 px-2 py-1.5"
                     placeholder={t('vpTargetId')}
                     value={relationForm.targetId}
                     onChange={(e) =>
@@ -356,7 +325,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                     }
                   />
                   <select
-                    className="rounded border border-slate-300 px-2 py-1.5"
+                    className="ui-input px-2 py-1.5"
                     value={relationForm.type}
                     onChange={(e) =>
                       setRelationForm((f) => ({ ...f, type: e.target.value }))
@@ -370,7 +339,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                   </select>
                   <button
                     type="submit"
-                    className="rounded bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700"
+                    className="ui-btn-primary px-3 py-1.5"
                   >
                     {t('vpAddRelation')}
                   </button>
@@ -378,154 +347,29 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
               )}
             </section>
 
-            <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">{t('vpStatusOps')}</h3>
-              {!editable ? (
-                <p className="mt-2 text-sm text-slate-400">
-                  {t('vpRejectedFinal')}
-                </p>
-              ) : (
-                <div className="mt-2 flex items-center gap-2 text-sm">
-                  {viewpoint.status === 'accepted' && (
-                    <button
-                      className="rounded border border-amber-300 px-3 py-1.5 text-amber-700 hover:bg-amber-50"
-                      onClick={handleSuspend}
-                    >
-                      {t('vpSuspend')}
-                    </button>
-                  )}
-                  {viewpoint.status === 'suspended' && (
-                    <button
-                      className="rounded border border-green-300 px-3 py-1.5 text-green-700 hover:bg-green-50"
-                      onClick={handleRestore}
-                    >
-                      {t('vpRestore')}
-                    </button>
-                  )}
-                  <button
-                    className="rounded border border-red-300 px-3 py-1.5 text-red-600 hover:bg-red-50"
-                    onClick={() => setRejectForm((f) => ({ ...f, open: !f.open }))}
-                  >
-                    {t('reject')}
-                  </button>
-                </div>
-              )}
-              {rejectForm.open && editable && (
-                <form onSubmit={handleReject} className="mt-2 space-y-2">
-                  <textarea
-                    className="w-full rounded border border-slate-300 p-2 text-sm outline-none focus:border-slate-500"
-                    rows={2}
-                    placeholder={t('vpRejectReasonPlaceholder')}
-                    value={rejectForm.reason}
-                    onChange={(e) =>
-                      setRejectForm((f) => ({ ...f, reason: e.target.value }))
-                    }
-                  />
-                  <button
-                    type="submit"
-                    className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-500"
-                  >
-                    {t('confirmReject')}
-                  </button>
-                </form>
-              )}
-            </section>
-
             {editable && (
-              <section className="mt-6 border-t border-slate-100 pt-4">
-                <h3 className="text-sm font-bold text-slate-800">{t('vpMerge')}</h3>
-                <form onSubmit={handleMerge} className="mt-2 space-y-2 text-sm">
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="w-28 rounded border border-slate-300 px-2 py-1.5"
-                      placeholder={t('vpMergeTarget')}
-                      value={mergeForm.targetId}
-                      onChange={(e) =>
-                        setMergeForm((f) => ({ ...f, targetId: e.target.value }))
-                      }
-                    />
-                    <input
-                      className="flex-1 rounded border border-slate-300 px-2 py-1.5"
-                      placeholder={t('vpMergeReason')}
-                      value={mergeForm.reason}
-                      onChange={(e) =>
-                        setMergeForm((f) => ({ ...f, reason: e.target.value }))
-                      }
-                    />
-                    <button
-                      type="button"
-                      className="rounded border border-slate-300 px-3 py-1.5 text-slate-600 hover:text-slate-800"
-                      onClick={handlePrefillMerge}
-                    >
-                      {t('vpMergePrefill')}
-                    </button>
-                  </div>
-                  <textarea
-                    className="w-full rounded border border-slate-300 p-2 outline-none focus:border-slate-500"
-                    rows={4}
-                    placeholder={t('vpMergeContentPlaceholder')}
-                    value={mergeForm.content}
-                    onChange={(e) =>
-                      setMergeForm((f) => ({ ...f, content: e.target.value }))
-                    }
-                  />
-                  <button
-                    type="submit"
-                    className="rounded bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700"
-                  >
-                    {t('vpMergeConfirm')}
-                  </button>
-                </form>
+              <section className="mt-6 border-t border-rule pt-4">
+                <h3 className="text-sm font-bold text-ink">{t('vpWithdrawTitle')}</h3>
+                <p className="mt-1 text-xs text-ink-2">{t('vpWithdrawHint')}</p>
+                <button
+                  className="ui-btn-danger mt-2 px-3 py-1.5 text-sm"
+                  onClick={handleWithdraw}
+                >
+                  {t('vpWithdraw')}
+                </button>
               </section>
             )}
 
-            {editable && (
-              <section className="mt-6 border-t border-slate-100 pt-4">
-                <h3 className="text-sm font-bold text-slate-800">{t('vpSplit')}</h3>
-                <form onSubmit={handleSplit} className="mt-2 space-y-2 text-sm">
-                  <textarea
-                    className="w-full rounded border border-slate-300 p-2 outline-none focus:border-slate-500"
-                    rows={5}
-                    placeholder={t('vpSplitPlaceholder')}
-                    value={splitForm.text}
-                    onChange={(e) =>
-                      setSplitForm((f) => ({ ...f, text: e.target.value }))
-                    }
-                  />
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="flex-1 rounded border border-slate-300 px-2 py-1.5"
-                      placeholder={t('vpSplitReason')}
-                      value={splitForm.reason}
-                      onChange={(e) =>
-                        setSplitForm((f) => ({ ...f, reason: e.target.value }))
-                      }
-                    />
-                    <span className="text-xs text-slate-500">
-                      {tf('vpSplitCount', { n: splitParts.length })}
-                    </span>
-                    <button
-                      type="submit"
-                      className="rounded bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700 disabled:opacity-40"
-                      disabled={splitParts.length < 2}
-                    >
-                      {t('vpSplitConfirm')}
-                    </button>
-                  </div>
-                </form>
-              </section>
-            )}
-
-            <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">{t('vpReviewHistory')}</h3>
+            <section className="mt-6 border-t border-rule pt-4">
+              <h3 className="text-sm font-bold text-ink">{t('vpReviewHistory')}</h3>
               {!review ? (
-                <p className="mt-2 text-sm text-slate-400">
+                <p className="mt-2 text-sm text-ink-3">
                   {t('vpNoReview')}
                 </p>
               ) : (
                 <div className="mt-2 space-y-3">
                   {review.decision && (
-                    <p className="rounded bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                    <p className="rounded-input bg-paper-2 px-3 py-2 text-xs text-ink-2">
                       {t('decisionPrefix')}
                       {t('decisionTypes')[review.decision.decision_type] ??
                         review.decision.decision_type}
@@ -535,7 +379,7 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                     </p>
                   )}
                   {review.messages.length === 0 ? (
-                    <p className="text-sm text-slate-400">{t('vpReviewNoMessages')}</p>
+                    <p className="text-sm text-ink-3">{t('vpReviewNoMessages')}</p>
                   ) : (
                     <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
                       {review.messages.map((msg) => (
@@ -546,17 +390,17 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                           }`}
                         >
                           <div
-                            className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                            className={`max-w-[85%] rounded-input px-3 py-2 text-sm ${
                               msg.role === 'user'
-                                ? 'bg-slate-800 text-white'
-                                : 'bg-slate-100 text-slate-800'
+                                ? 'bg-accent text-accent-ink'
+                                : 'bg-paper-2 text-ink'
                             }`}
                           >
                             <p
                               className={`mb-0.5 text-xs ${
                                 msg.role === 'user'
-                                  ? 'text-slate-300'
-                                  : 'text-slate-400'
+                                  ? 'text-accent-ink/70'
+                                  : 'text-ink-3'
                               }`}
                             >
                               {msg.role === 'user' ? t('me') : t('ai')}
@@ -574,43 +418,6 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                     </ul>
                   )}
                 </div>
-              )}
-            </section>
-
-            <section className="mt-6 border-t border-slate-100 pt-4">
-              <h3 className="text-sm font-bold text-slate-800">{t('vpHistory')}</h3>
-              {history.length === 0 ? (
-                <p className="mt-2 text-sm text-slate-400">{t('vpNoHistory')}</p>
-              ) : (
-                <ul className="mt-2 space-y-1 text-sm">
-                  {history.map((event) => (
-                    <li key={event.id} className="text-slate-600">
-                      <span className="text-xs text-slate-400">
-                        {formatDateTime(event.created_at, lang)}
-                      </span>
-                      <span className="ml-2">
-                        {eventLabel(event.event_type, lang)}
-                      </span>
-                      {(event.from_status || event.to_status) && (
-                        <span className="ml-2 text-xs text-slate-500">
-                          {statusLabel(event.from_status, lang) ?? '—'} →{' '}
-                          {statusLabel(event.to_status, lang) ?? '—'}
-                        </span>
-                      )}
-                      {relationDetail(event.detail, tf, lang) && (
-                        <span className="ml-2 text-xs text-slate-500">
-                          {relationDetail(event.detail, tf, lang)}
-                        </span>
-                      )}
-                      {event.reason && (
-                        <span className="ml-2 text-xs text-slate-500">
-                          {t('reasonPrefix')}
-                          {event.reason}
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
               )}
             </section>
           </>

@@ -110,13 +110,13 @@ export default function LlmSettingsCard() {
   }
 
   return (
-    <div className="rounded-lg bg-white p-4 shadow">
+    <div className="ui-card p-4">
       <button
-        className="flex w-full items-center text-sm font-bold text-slate-800"
+        className="flex w-full items-center text-sm font-bold text-ink"
         onClick={() => setOpen(!open)}
       >
         {t('aiSettings')}
-        <span className="ml-auto text-xs font-normal text-slate-400">
+        <span className="ml-auto text-xs font-normal text-ink-3">
           {loading
             ? t('loading')
             : effective
@@ -129,9 +129,9 @@ export default function LlmSettingsCard() {
       {open && (
         <div className="mt-3 space-y-3 text-sm">
           <label className="block">
-            <span className="text-slate-500">{t('provider')}</span>
+            <span className="text-ink-2">{t('provider')}</span>
             <select
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
+              className="ui-input mt-1 w-full px-2 py-1.5"
               value={providerKey}
               onChange={(e) => handleProviderChange(e.target.value)}
             >
@@ -144,10 +144,10 @@ export default function LlmSettingsCard() {
           </label>
 
           <label className="block">
-            <span className="text-slate-500">{t('apiKey')}</span>
+            <span className="text-ink-2">{t('apiKey')}</span>
             <input
               type="password"
-              className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
+              className="ui-input mt-1 w-full px-2 py-1.5"
               placeholder={
                 savedKeyMasked
                   ? tf('apiKeyPlaceholderSaved', { masked: savedKeyMasked })
@@ -161,7 +161,7 @@ export default function LlmSettingsCard() {
               autoComplete="off"
             />
             {savedKeyMasked && (
-              <span className="mt-1 block text-xs text-slate-400">
+              <span className="mt-1 block text-xs text-ink-3">
                 {tf('apiKeySavedNote', { masked: savedKeyMasked })}
               </span>
             )}
@@ -169,9 +169,9 @@ export default function LlmSettingsCard() {
 
           {providerKey === 'custom' && (
             <label className="block">
-              <span className="text-slate-500">{t('baseUrl')}</span>
+              <span className="text-ink-2">{t('baseUrl')}</span>
               <input
-                className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
+                className="ui-input mt-1 w-full px-2 py-1.5"
                 placeholder={t('baseUrlPlaceholder')}
                 value={baseUrl}
                 onChange={(e) => {
@@ -184,9 +184,9 @@ export default function LlmSettingsCard() {
 
           {models.length > 0 && (
             <label className="block">
-              <span className="text-slate-500">{t('modelLabel')}</span>
+              <span className="text-ink-2">{t('modelLabel')}</span>
               <select
-                className="mt-1 w-full rounded border border-slate-300 px-2 py-1.5"
+                className="ui-input mt-1 w-full px-2 py-1.5"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
               >
@@ -200,21 +200,21 @@ export default function LlmSettingsCard() {
           )}
 
           {message && (
-            <p className={message.ok ? 'text-green-600' : 'text-red-600'}>
+            <p className={message.ok ? 'text-accent' : 'text-danger'}>
               {message.text}
             </p>
           )}
 
           <div className="flex gap-2">
             <button
-              className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50"
+              className="ui-btn-ghost px-3 py-1.5"
               onClick={handleTest}
               disabled={busy}
             >
               {t('testConnection')}
             </button>
             <button
-              className="rounded bg-slate-800 px-3 py-1.5 text-white hover:bg-slate-700 disabled:opacity-50"
+              className="ui-btn-primary px-3 py-1.5"
               onClick={handleSave}
               disabled={busy || (models.length > 0 && !model)}
             >

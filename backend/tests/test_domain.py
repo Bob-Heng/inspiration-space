@@ -9,7 +9,6 @@ from app.domain.tags import (
 )
 from app.domain.viewpoint_state import (
     InvalidTransitionError,
-    check_inspiration_transition,
     check_viewpoint_transition,
     validate_viewpoint_status,
 )
@@ -19,10 +18,8 @@ class TestViewpointStateMachine:
     @pytest.mark.parametrize(
         "from_status,to_status",
         [
-            ("accepted", "suspended"),   # 冲突转悬置
-            ("accepted", "rejected"),    # 裁决否定
-            ("suspended", "accepted"),   # 裁决采纳
-            ("suspended", "rejected"),   # 裁决否定
+            ("draft", "accepted"),   # 采纳入库
+            ("accepted", "draft"),   # 集思录撤回
         ],
     )
     def test_合法转换通过(self, from_status, to_status):
@@ -31,10 +28,10 @@ class TestViewpointStateMachine:
     @pytest.mark.parametrize(
         "from_status,to_status",
         [
-            ("rejected", "accepted"),    # 否定是终态
-            ("rejected", "suspended"),   # 否定是终态
+            ("draft", "draft"),          # 状态未变化
             ("accepted", "accepted"),    # 状态未变化
-            ("suspended", "suspended"),
+            ("accepted", "suspended"),   # 悬置已从系统删除
+            ("accepted", "rejected"),    # 否定已从系统删除
             ("pending", "accepted"),     # 灵感状态不是观点状态
             ("accepted", "pending"),
             ("accepted", "deleted"),     # 不存在的状态
@@ -45,35 +42,10 @@ class TestViewpointStateMachine:
             check_viewpoint_transition(from_status, to_status)
 
     def test_合法状态校验(self):
-        for status in ("accepted", "suspended", "rejected"):
+        for status in ("draft", "accepted"):
             validate_viewpoint_status(status)
         with pytest.raises(InvalidTransitionError):
             validate_viewpoint_status("archived")
-
-
-class TestInspirationStateMachine:
-    def test_入队到审议(self):
-        check_inspiration_transition("pending", "in_review")
-
-    def test_审议退回队列(self):
-        check_inspiration_transition("in_review", "pending")
-
-    @pytest.mark.parametrize("final_status", ["reviewed", "rejected"])
-    def test_审议完结出队(self, final_status):
-        check_inspiration_transition("in_review", final_status)
-
-    @pytest.mark.parametrize(
-        "from_status,to_status",
-        [
-            ("pending", "accepted"),     # 灵感状态不是观点状态
-            ("pending", "reviewed"),     # 未经审议不得直接完结
-            ("reviewed", "pending"),     # 完结是终态
-            ("rejected", "in_review"),
-        ],
-    )
-    def test_非法转换被拒绝(self, from_status, to_status):
-        with pytest.raises(InvalidTransitionError):
-            check_inspiration_transition(from_status, to_status)
 
 
 class TestTags:

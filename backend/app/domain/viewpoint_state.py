@@ -1,12 +1,12 @@
 """观点状态机。
 
-规则（docs/02 §4）：
-- 观点状态合法值：accepted（采纳）/ suspended（悬置）/ rejected（否定）
-- rejected 为终态，不允许转出
-- 任何时刻发现冲突：双方均转悬置（accepted -> suspended）
-- 系统不得擅自变更状态，所有转移必须由审议决策显式触发
-- 审议会话状态：active（进行中）/ paused（暂缓挂起，可恢复）/ completed（已完结，终态）
-- 灵感状态：pending（待审）/ in_review（审议中）/ reviewed（已审议，采纳出队留档）/ rejected（否定出队留档），后两者为终态
+规则：
+- 观点状态合法值：draft（草稿，他山坊打磨流程中，集思录隐藏）/ accepted（已采纳入库）
+- draft ↔ accepted 双向可转：采纳使草稿入库，集思录撤回使已采纳观点退回草稿
+- 系统不得擅自变更状态，所有转移必须由打磨决策或显式撤回触发
+- 打磨会话状态：active（进行中）/ paused（挂起，可恢复）/ completed（已完成）
+- completed 允许转回 active：用于集思录撤回后重开该观点的会话
+- 灵感无状态机：首页状态由关联观点的状态推导
 """
 
 
@@ -14,21 +14,11 @@ class InvalidTransitionError(ValueError):
     """非法状态转换。"""
 
 
-VIEWPOINT_STATUSES = {"accepted", "suspended", "rejected"}
+VIEWPOINT_STATUSES = {"draft", "accepted"}
 
 VIEWPOINT_TRANSITIONS: dict[str, set[str]] = {
-    "accepted": {"suspended", "rejected"},
-    "suspended": {"accepted", "rejected"},
-    "rejected": set(),
-}
-
-INSPIRATION_STATUSES = {"pending", "in_review", "reviewed", "rejected"}
-
-INSPIRATION_TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"in_review"},
-    "in_review": {"pending", "reviewed", "rejected"},
-    "reviewed": set(),
-    "rejected": set(),
+    "draft": {"accepted"},
+    "accepted": {"draft"},
 }
 
 
@@ -47,27 +37,18 @@ def check_viewpoint_transition(from_status: str, to_status: str) -> None:
         raise InvalidTransitionError(f"非法观点状态转换：{from_status} -> {to_status}")
 
 
-def check_inspiration_transition(from_status: str, to_status: str) -> None:
-    """校验灵感（待审队列条目）状态转换是否合法。"""
-    if from_status not in INSPIRATION_STATUSES:
-        raise InvalidTransitionError(f"非法灵感状态：{from_status}")
-    if to_status not in INSPIRATION_STATUSES:
-        raise InvalidTransitionError(f"非法灵感状态：{to_status}")
-    if to_status not in INSPIRATION_TRANSITIONS[from_status]:
-        raise InvalidTransitionError(f"非法灵感状态转换：{from_status} -> {to_status}")
-
-
 SESSION_STATUSES = {"active", "paused", "completed"}
 
 SESSION_TRANSITIONS: dict[str, set[str]] = {
     "active": {"paused", "completed"},
     "paused": {"active"},
-    "completed": set(),
+    # completed -> active：集思录撤回后重开该观点的会话
+    "completed": {"active"},
 }
 
 
 def check_session_transition(from_status: str, to_status: str) -> None:
-    """校验审议会话状态转换是否合法。completed 为终态。"""
+    """校验打磨会话状态转换是否合法。"""
     if from_status not in SESSION_STATUSES:
         raise InvalidTransitionError(f"非法会话状态：{from_status}")
     if to_status not in SESSION_STATUSES:

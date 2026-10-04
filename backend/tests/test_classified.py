@@ -1,4 +1,4 @@
-"""分类观点视图单元测试（TASK-016）：道/法/术分组、排除否定、悬置保留、日期排序。"""
+"""分类观点视图单元测试：道/法/术分组、只收已采纳、日期排序。"""
 
 from datetime import date
 
@@ -41,15 +41,12 @@ class TestClassified:
         assert [v.id for v in groups["fa"]] == [b.id]
         assert [v.id for v in groups["shu"]] == [c.id]
 
-    def test_否定排除悬置保留(self, db_session):
+    def test_草稿不列入只收已采纳(self, db_session):
         accepted = _add(db_session, "采纳", "dao")
-        suspended = _add(db_session, "悬置", "dao", status="suspended")
-        _add(db_session, "否定", "dao", status="rejected")
+        _add(db_session, "草稿", "dao", status="draft")
         groups = classified_viewpoints(db_session)
         ids = [v.id for v in groups["dao"]]
-        assert accepted.id in ids
-        assert suspended.id in ids  # 悬置保留，由前端标记
-        assert all(v.status != "rejected" for v in groups["dao"])
+        assert ids == [accepted.id]  # draft 打磨中对集思录隐藏
 
     def test_组内按来源日期升序无日期排最后(self, db_session):
         late = _add(db_session, "晚", "fa", source_date=date(2026, 6, 1))

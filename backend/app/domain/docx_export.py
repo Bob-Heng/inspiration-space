@@ -4,8 +4,8 @@
 - 序号为观点库内编号（id），保证导出件可回溯；
 - 日期为原系统简写 M.D；无日期/无分层/空标签位均留空位（与空标签位约定一致）；
 - 正文跨段落在 docx 中还原为多个段落；
-- 非采纳状态在条目末尾保留标记：【悬置】/【已否定】（原始观点文档三种状态均列入）；
-- 分类视图：道/法/术三节，已否定不列入，悬置保留标记，组内按来源日期排序。
+- 只导出已采纳（accepted）观点：draft 打磨中对集思录隐藏，同样不进入导出；
+- 分类视图：道/法/术三节，组内按来源日期排序。
 """
 
 from datetime import date
@@ -16,10 +16,8 @@ from docx import Document
 from ..models import Viewpoint
 from .tags import LAYER_LABELS
 
-STATUS_MARKERS = {"suspended": "【悬置】", "rejected": "【已否定】"}
-
-RAW_VIEWPOINTS_HEADER = "（经审议采纳/悬置/否定的本人原创观点，按序列入库。格式：序号.[日期][分层][标签]正文）"
-CLASSIFIED_HEADER = "（分类观点视图：道/法/术三节，已否定不列入，悬置保留标记，组内按来源日期排序。）"
+RAW_VIEWPOINTS_HEADER = "（经审议采纳的本人原创观点，按序列入库。格式：序号.[日期][分层][标签]正文）"
+CLASSIFIED_HEADER = "（分类观点视图：道/法/术三节，组内按来源日期排序。）"
 
 
 def _format_date(source_date: date | None) -> str:
@@ -48,8 +46,7 @@ def format_viewpoint_line(viewpoint: Viewpoint) -> str:
         f"[{layer}][{_format_tags(viewpoint)}]"
     )
     first_paragraph = viewpoint.content.split("\n", 1)[0]
-    marker = STATUS_MARKERS.get(viewpoint.status, "")
-    return f"{head}{first_paragraph}{marker}"
+    return f"{head}{first_paragraph}"
 
 
 def _add_viewpoint(doc: Document, viewpoint: Viewpoint) -> None:

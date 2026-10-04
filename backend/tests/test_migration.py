@@ -155,7 +155,7 @@ class TestMigrationIdempotency:
         with session_factory() as db:
             inspirations = list(db.scalars(select(models.Inspiration).order_by(models.Inspiration.id)))
             assert len(inspirations) == 3
-            assert all(i.source_type == "migration" and i.status == "pending" for i in inspirations)
+            assert all(i.source_type == "migration" for i in inspirations)
             assert inspirations[0].source_date == date(2026, 4, 21)
 
             viewpoints = list(db.scalars(select(models.Viewpoint).order_by(models.Viewpoint.id)))

@@ -34,6 +34,21 @@ class AnalysisResult(BaseModel):
     relations: list[AnalysisRelation]
 
 
+class ViewpointCheck(BaseModel):
+    """观点判断输出：一条灵感是否已构成可裁决的观点（docs/04 D9）。"""
+
+    is_viewpoint: bool
+
+
+class DistillReply(BaseModel):
+    """提炼阶段讨论输出：自然回复 + 收敛信号。ready_to_polish 仅在用户已明确说出
+    可裁决的命题性判断时为 true，distilled_viewpoint 为可直接入库的观点草稿。"""
+
+    reply: NonEmptyStr
+    ready_to_polish: bool
+    distilled_viewpoint: str | None = None
+
+
 class DocxSplitItem(BaseModel):
     """docx 拆解出的单条灵感：只切割不改写；date_text 保留原文日期写法，识别不到为 null。"""
 

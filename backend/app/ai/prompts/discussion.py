@@ -6,7 +6,7 @@ AI 只输出观点与提问，不替人类裁决，也不落库任何业务数�
 
 import json
 
-from ...models import Inspiration, ReviewMessage, Viewpoint
+from ...models import ReviewMessage, Viewpoint
 from ..base import Message
 from ..schemas import AnalysisResult
 from .analysis import _viewpoint_snapshot
@@ -32,14 +32,14 @@ def _analysis_section(analysis: AnalysisResult | None) -> str:
 
 
 def build_discussion_messages(
-    inspiration: Inspiration,
+    viewpoint: Viewpoint,
     viewpoints: list[Viewpoint],
     analysis: AnalysisResult | None,
     history: list[ReviewMessage],
 ) -> list[Message]:
-    """组装讨论上下文：灵感原文 + 审议分析（若有）+ 观点库快照 + 历史对话。"""
+    """组装讨论上下文：观点正文（duck-type .content）+ 审议分析（若有）+ 观点库快照 + 历史对话。"""
     context = f"""正在审议的灵感（待审条目）：
-{inspiration.content}
+{viewpoint.content}
 
 {_analysis_section(analysis)}
 

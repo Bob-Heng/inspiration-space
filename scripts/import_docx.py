@@ -2,7 +2,7 @@
 
 迁移对象：
 - 原系统/观点库/待审观点.docx → inspirations 表
-  （28 条 = 27 条编号 + 1 段无编号游离文本；source_type=migration，status=pending，
+  （28 条 = 27 条编号 + 1 段无编号游离文本；source_type=migration，
   逐条独立编号接在现有数据后；游离文本日期取 2026-04-21）
 - 原系统/观点库/原始观点.docx → viewpoints 表
   （5 条；status=accepted，type=raw；解析 [分层][领域/圈层/学科/场景]，
@@ -233,7 +233,6 @@ def migrate_pending(db: Session, items: list[ParsedInspiration]) -> MigrateRepor
             content=item.content,
             source_date=item.source_date,
             source_type="migration",
-            status="pending",
         )
         db.add(inspiration)
         db.flush()
