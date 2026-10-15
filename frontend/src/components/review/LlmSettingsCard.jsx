@@ -6,9 +6,9 @@ import { useLang } from '../../i18n'
  * AI 服务设置卡片：选择服务商 → 填 API Key → 测试连接拉取可用模型 → 下拉选择模型 → 保存。
  * 界面配置保存后立即生效，优先于环境变量；密钥只回显末 4 位。
  */
-export default function LlmSettingsCard() {
+export default function LlmSettingsCard({ defaultOpen = false }) {
   const { t, tf } = useLang()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   const [loading, setLoading] = useState(true)
   const [presets, setPresets] = useState([])
   const [effective, setEffective] = useState(null)
@@ -114,6 +114,7 @@ export default function LlmSettingsCard() {
       <button
         className="flex w-full items-center text-sm font-bold text-ink"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
       >
         {t('aiSettings')}
         <span className="ml-auto text-xs font-normal text-ink-3">
