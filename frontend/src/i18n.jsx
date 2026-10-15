@@ -172,6 +172,7 @@ export const STRINGS = {
     viewpointLoadFailed: '观点加载失败',
     // AI 服务设置
     aiSettings: 'AI 服务设置',
+    aiSetupHint: '首次使用 AI：选择服务商，填写 API Key，测试连接后选择模型并保存。自定义 OpenAI 兼容接口还需填写 Base URL。',
     provider: '服务商',
     apiKey: 'API Key',
     apiKeyPlaceholderNew: '留空则保持已保存的密钥',
@@ -452,6 +453,7 @@ export const STRINGS = {
     layerLabel: 'Layer: {v}',
     viewpointLoadFailed: 'Failed to load viewpoint',
     aiSettings: 'AI service',
+    aiSetupHint: 'To start using AI, choose a provider, enter your API key, test the connection, select a model, and save. Custom OpenAI-compatible services also require a Base URL.',
     provider: 'Provider',
     apiKey: 'API Key',
     apiKeyPlaceholderNew: 'Leave blank to keep the saved key',
