@@ -6,6 +6,7 @@ const NAV = [
   { key: 'home', to: '/', labelKey: 'home' },
   { key: 'review', to: '/review', labelKey: 'reviewWorkbench' },
   { key: 'viewpoints', to: '/viewpoints', labelKey: 'viewpointLibrary' },
+  { key: 'settings', to: '/settings', labelKey: 'aiSettings' },
 ]
 
 // 跨页面记住金色下标位置（页头随路由切换重挂载，位置在模块作用域保持连续：
