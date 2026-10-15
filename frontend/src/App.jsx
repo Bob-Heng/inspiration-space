@@ -4,6 +4,7 @@ import AiStatusWatcher from './components/AiStatusWatcher'
 import RequireAuth from './components/RequireAuth'
 import { HeaderProvider } from './header'
 import HomePage from './pages/HomePage'
+import SettingsPage from './pages/SettingsPage'
 import LoginPage from './pages/LoginPage'
 import ReviewPage from './pages/ReviewPage'
 import ViewpointsPage from './pages/ViewpointsPage'
@@ -61,6 +62,7 @@ function AnimatedRoutes() {
           <Route path="/" element={<HomePage />} />
           <Route path="/review" element={<ReviewPage />} />
           <Route path="/viewpoints" element={<ViewpointsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
