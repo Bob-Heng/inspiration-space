@@ -135,10 +135,8 @@ export default function HomePage() {
   return (
     <div ref={rootRef} className="min-h-screen bg-paper">
       <main className="mx-auto w-full max-w-7xl px-4 py-6">
-        {/* 与审议工作台中栏（lg:col-span-6）等宽 */}
-        <div className="lg:mx-auto lg:w-1/2">
-          <InspirationPanel />
-        </div>
+        {/* 与他山坊一致的 3/6/3 三栏：左录入 / 中列表 / 右 AI 配置（栏位在 InspirationPanel 内） */}
+        <InspirationPanel />
       </main>
       <ScrollElevator />
     </div>

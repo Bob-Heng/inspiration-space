@@ -49,6 +49,16 @@ class DistillReply(BaseModel):
     distilled_viewpoint: str | None = None
 
 
+class PolishReply(BaseModel):
+    """打磨阶段讨论输出：自然回复 + 采纳收敛信号。ready_to_adopt 仅在用户与 AI
+    已就观点最终表述形成共识时为 true，polished_viewpoint 为双方认可、
+    可直接入库的最终正文。"""
+
+    reply: NonEmptyStr
+    ready_to_adopt: bool
+    polished_viewpoint: str | None = None
+
+
 class DocxSplitItem(BaseModel):
     """docx 拆解出的单条灵感：只切割不改写；date_text 保留原文日期写法，识别不到为 null。"""
 

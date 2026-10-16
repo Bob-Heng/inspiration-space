@@ -101,6 +101,9 @@ class ReviewSession(Base):
     analysis_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 分析结果的英文版（JSON），生成时同步翻译
     analysis_json_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 提炼→打磨时暂存的提炼观点：供打磨完成确认弹窗对照展示，
+    # 采纳或回退到提炼阶段后清空
+    distilled_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ReviewMessage(Base):

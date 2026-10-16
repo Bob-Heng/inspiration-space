@@ -15,6 +15,8 @@ async function request(path, options = {}) {
     res = await fetch(BASE_URL + path, {
       credentials: 'include',
       ...options,
+      // 界面语言随请求下发：AI 回复语言据此决定（与用户发言语言无关）
+      headers: { 'X-UI-Lang': lang, ...(options.headers ?? {}) },
     })
   } catch {
     throw new ApiError(
@@ -137,12 +139,9 @@ export const api = {
     })
   },
 
-  postOpeningQuestion(sessionId, regenerate = false, polishEntry = false) {
-    const params = new URLSearchParams()
-    if (regenerate) params.set('regenerate', 'true')
-    if (polishEntry) params.set('polish_entry', 'true')
-    const qs = params.toString()
-    return request(`/api/review/sessions/${sessionId}/opening${qs ? `?${qs}` : ''}`, { method: 'POST' })
+  postOpeningQuestion(sessionId, polishEntry = false) {
+    const qs = polishEntry ? '?polish_entry=true' : ''
+    return request(`/api/review/sessions/${sessionId}/opening${qs}`, { method: 'POST' })
   },
   getReviewQueue: () => request('/api/review/queue'),
   startReviewSession(viewpointId) {

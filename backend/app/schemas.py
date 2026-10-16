@@ -140,6 +140,10 @@ class ReviewSessionOut(BaseModel):
     messages: list[ReviewMessageOut] = []
     analysis: dict | None = None
     analysis_en: dict | None = None
+    # 进入打磨时暂存的提炼观点（打磨完成确认弹窗中栏对照用）
+    distilled_snapshot: str | None = None
+    # 来源灵感原文（弹窗左栏对照用）：{content, content_zh, content_en, original_lang}
+    source_inspiration: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -162,11 +166,23 @@ class DistillSignal(BaseModel):
     reply: str | None = None
 
 
+class PolishSignal(BaseModel):
+    """打磨阶段 AI 回复附带的采纳收敛信号：AI 判定双方已就最终表述形成共识。
+
+    ready_to_adopt=true 时该轮回复不落库、不进对话框（前端弹窗接管），
+    reply 携带被压下的回复正文，供用户取消弹窗时临时展示。"""
+
+    ready_to_adopt: bool
+    polished_viewpoint: str | None = None
+    reply: str | None = None
+
+
 class ReviewMessagePair(BaseModel):
     user_message: ReviewMessageOut
-    # 提炼收敛轮回复不落库，此时为 None
+    # 收敛轮（提炼/打磨）回复不落库，此时为 None
     assistant_message: ReviewMessageOut | None = None
     distill_signal: DistillSignal | None = None
+    polish_signal: PolishSignal | None = None
 
 
 class ViewpointCheckOut(BaseModel):

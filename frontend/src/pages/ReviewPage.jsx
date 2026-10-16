@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import ScrollElevator from '../components/ScrollElevator'
 import { api } from '../api'
 import AnalysisCard from '../components/review/AnalysisCard'
+import AdoptConfirmModal from '../components/review/AdoptConfirmModal'
+import AiFailureNotice from '../components/review/AiFailureNotice'
 import DecisionBar from '../components/review/DecisionBar'
 import DiscussionCard from '../components/review/DiscussionCard'
 import { PolishEntryModal, PolishReadyModal } from '../components/review/PhaseModals'
@@ -43,6 +45,11 @@ export default function ReviewPage() {
   const [phaseError, setPhaseError] = useState(null)
   const [distillSignal, setDistillSignal] = useState(null)
   const [polishBusy, setPolishBusy] = useState(false)
+  // 打磨收敛（AI 判定已形成共识）：adoptPrompt 控制采纳确认弹窗，
+  // draft 预填 AI 给的最终正文，reply 为被压下的 AI 回复（继续讨论时临时补回）
+  const [adoptPrompt, setAdoptPrompt] = useState(null) // null | { draft, reply }
+  // 首问生成失败：顶部红色提示（不自动消失），可重试/取消
+  const [aiFailure, setAiFailure] = useState(null) // null | { message, retry }
   const attemptedRef = useRef(null)
   const queueAsideRef = useRef(null)
 
@@ -88,26 +95,7 @@ export default function ReviewPage() {
       await loadQueue()
       if (regen) {
         // 打磨讨论已被后端清空：请 AI 重发"进入打磨"的衔接首问
-        try {
-          const opening = await api.postOpeningQuestion(current.id, false, true)
-          if (opening) {
-            setSession((s) =>
-              s ? { ...s, messages: [...s.messages, opening] } : s,
-            )
-          }
-        } catch {
-          // 衔接首问失败不阻断：用户可直接发言继续打磨讨论
-        }
-      } else if (!current.messages?.some((m) => m.role === 'user')) {
-        // 分析完成后刷新 AI 首问：用户未发言时，旧首问作废、按新分析重提
-        try {
-          const opening = await api.postOpeningQuestion(current.id, true)
-          if (opening) {
-            setSession((s) => ({ ...s, messages: [opening] }))
-          }
-        } catch {
-          // 首问失败不阻断分析展示，用户可自行发言开启讨论
-        }
+        await requestPolishEntryOpening(current)
       }
     } catch (err) {
       setError(err.message)
@@ -123,6 +111,7 @@ export default function ReviewPage() {
     setPhaseModal(null)
     setPhaseError(null)
     setDistillSignal(null)
+    setAdoptPrompt(null)
     try {
       const s = await api.startReviewSession(viewpointId)
       // 全套展示数据拉齐后一次性落地（含关联观点），所有栏同帧出现
@@ -193,10 +182,12 @@ export default function ReviewPage() {
     setRelated(bundle.related)
   }
 
-  // AI 首问：还没有讨论消息，且（已有分析 或 处于提炼阶段）时，请 AI 主动开问
+  // AI 首问：还没有讨论消息，且（已有分析 或 处于提炼阶段）时，请 AI 主动开问。
+  // 失败弹窗提示（可重试/取消），不再静默
   async function maybeRequestOpening(s) {
     if ((s?.messages?.length ?? 0) > 0) return
     if (!s?.analysis && (s?.phase ?? 'polish') !== 'distill') return
+    setAiFailure(null)
     try {
       const opening = await api.postOpeningQuestion(s.id)
       if (opening) {
@@ -206,8 +197,25 @@ export default function ReviewPage() {
             : cur,
         )
       }
-    } catch {
-      // 首问失败静默：用户可自行发言开启讨论
+    } catch (err) {
+      setAiFailure({ message: err.message, retry: () => maybeRequestOpening(s) })
+    }
+  }
+
+  // 提炼→打磨转换后的衔接首问（保留的提炼讨论之后，须已有分析）
+  async function requestPolishEntryOpening(s) {
+    setAiFailure(null)
+    try {
+      const opening = await api.postOpeningQuestion(s.id, true)
+      if (opening) {
+        setSession((cur) =>
+          cur && cur.id === s.id
+            ? { ...cur, messages: [...cur.messages, opening] }
+            : cur,
+        )
+      }
+    } catch (err) {
+      setAiFailure({ message: err.message, retry: () => requestPolishEntryOpening(s) })
     }
   }
 
@@ -257,7 +265,7 @@ export default function ReviewPage() {
     setSending(true)
     setError(null)
     try {
-      const { user_message, assistant_message, distill_signal } =
+      const { user_message, assistant_message, distill_signal, polish_signal } =
         await api.sendReviewMessage(session.id, {
           content,
           analysis: analysis ?? undefined,
@@ -278,6 +286,13 @@ export default function ReviewPage() {
           setPhaseError(null)
           setPhaseModal('ready')
         }
+      }
+      // 打磨收敛信号（仅 polish 阶段非空）：AI 判定已形成共识时弹采纳确认弹窗
+      if (polish_signal?.ready_to_adopt && phase === 'polish') {
+        setAdoptPrompt({
+          draft: polish_signal.polished_viewpoint || session.viewpoint.content,
+          reply: polish_signal.reply ?? null,
+        })
       }
       return true
     } catch (err) {
@@ -301,18 +316,8 @@ export default function ReviewPage() {
       setDistillSignal(null)
       await handleAnalyze(updated)
       setPhaseModal(null)
-      try {
-        const opening = await api.postOpeningQuestion(updated.id, false, true)
-        if (opening) {
-          setSession((s) =>
-            s && s.id === updated.id
-              ? { ...s, messages: [...s.messages, opening] }
-              : s,
-          )
-        }
-      } catch {
-        // 衔接首问失败不阻断：用户可直接发言继续打磨讨论
-      }
+      // 提炼→打磨转换后的衔接首问（提炼讨论保留，打磨讨论由此接续）
+      await requestPolishEntryOpening(updated)
       // 阶段已转打磨：刷新队列阶段徽标（handleAnalyze 成功时内部也刷，这里兜底其失败路径）
       await loadQueue()
     } catch (err) {
@@ -345,6 +350,23 @@ export default function ReviewPage() {
     setSession((s) => (s ? { ...s, messages: [...s.messages, localReply] } : s))
   }
 
+  // 采纳确认弹窗"继续讨论"：被压下的 AI 回复临时补进对话框保持连贯
+  // （该回复未落库——刷新后不再出现，AI 下一轮也看不到它）
+  function adoptStay() {
+    setAdoptPrompt(null)
+    if (!adoptPrompt?.reply) return
+    const localReply = {
+      id: `local-${Date.now()}`,
+      role: 'assistant',
+      content: adoptPrompt.reply,
+      content_zh: adoptPrompt.reply,
+      content_en: null,
+      original_lang: 'zh',
+      created_at: new Date().toISOString(),
+    }
+    setSession((s) => (s ? { ...s, messages: [...s.messages, localReply] } : s))
+  }
+
   // 撤销/阶段回退统一落地：后端返回完整会话（undo-phase 后分析与打磨消息已清），
   // 提炼信号随之作废（对应消息可能已被撤销）
   async function applyUpdatedSession(updated) {
@@ -353,6 +375,7 @@ export default function ReviewPage() {
     setAnalysisEn(updated.analysis_en ?? null)
     setRelated(await fetchRelations(updated.analysis?.relations))
     setDistillSignal(null)
+    setAdoptPrompt(null)
   }
 
   // 消息级撤销：删当前阶段最后一条消息
@@ -397,6 +420,7 @@ export default function ReviewPage() {
     setPhaseModal(null)
     setPhaseError(null)
     setDistillSignal(null)
+    setAdoptPrompt(null)
     setSearchParams({})
     await loadQueue()
   }
@@ -513,12 +537,11 @@ export default function ReviewPage() {
         key={session?.id ?? 'none'}
         phase={phase}
         session={session}
-        analysis={analysis}
-        related={related}
-        onSubmit={handleDecision}
         onUndo={handleUndo}
         onUndoPhase={handleUndoPhase}
       />
+
+      <AiFailureNotice failure={aiFailure} onDismiss={() => setAiFailure(null)} />
 
       {phaseModal === 'entry' && (
         <PolishEntryModal
@@ -532,6 +555,7 @@ export default function ReviewPage() {
         <PolishReadyModal
           busy={polishBusy || analysisLoading}
           error={phaseError}
+          original={session?.source_inspiration ?? null}
           initialDraft={
             distillSignal?.distilled_viewpoint ||
             session?.viewpoint?.content ||
@@ -539,6 +563,16 @@ export default function ReviewPage() {
           }
           onConfirm={confirmEnterPolish}
           onStay={stayDiscussing}
+        />
+      )}
+      {adoptPrompt && session && phase === 'polish' && (
+        <AdoptConfirmModal
+          session={session}
+          analysis={analysis}
+          related={related}
+          initialDraft={adoptPrompt.draft}
+          onConfirm={handleDecision}
+          onStay={adoptStay}
         />
       )}
     </div>

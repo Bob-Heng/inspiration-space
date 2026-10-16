@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import ItemTitle from './ItemTitle'
+import LlmSettingsCard from './LlmSettingsCard'
 import PhaseBadge from './PhaseBadge'
 import SortToggle from './SortToggle'
 import TranslatedText from './TranslatedText'
@@ -54,23 +55,22 @@ export default function InspirationPanel() {
     load()
   }, [load])
 
-  const listEndRef = useRef(null)
+  // 录入成功后待定位滚动的灵感 id（由下方 effect 在渲染后消费）
+  const pendingScrollRef = useRef(null)
+  const listRef = useRef(null)
 
   async function handleCreate(e) {
     e.preventDefault()
     if (!content.trim()) return
     try {
-      await api.createInspiration({
+      const created = await api.createInspiration({
         content: content.trim(),
         source_date: sourceDate || new Date().toLocaleDateString('sv-SE'),
       })
       setContent('')
       setSourceDate('')
+      pendingScrollRef.current = created.id
       await load()
-      // 录入后自动滚动到列表底部（新增灵感处）
-      requestAnimationFrame(() =>
-        listEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' }),
-      )
     } catch (err) {
       setError(err.message)
     }
@@ -211,9 +211,35 @@ export default function InspirationPanel() {
     setPage(Math.min(Math.max(1, v), totalPages))
   }
 
+  // 录入后滚动到新增条目本身：倒序在第 1 页顶部，正序在最后一页末尾。
+  // 先计算目标页并翻页，翻页渲染后再定位 DOM 滚动；被筛选隐藏时不滚动
+  useEffect(() => {
+    const id = pendingScrollRef.current
+    if (id == null) return
+    // 列表数据还没刷新到包含新条目时等下一次渲染，不清除标记
+    if (!items.some((item) => item.id === id)) return
+    const idx = sortedItems.findIndex((item) => item.id === id)
+    if (idx === -1) {
+      pendingScrollRef.current = null
+      return
+    }
+    const targetPage = Math.floor(idx / PAGE_SIZE) + 1
+    if (targetPage !== currentPage) {
+      setPage(targetPage)
+      return
+    }
+    const el = listRef.current?.querySelector(`[data-iid="${id}"]`)
+    if (!el) return
+    pendingScrollRef.current = null
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+
   return (
-    <div className="space-y-6">
-      <form onSubmit={handleCreate} className="ui-card p-5">
+    <div>
+      {/* 左栏录入 / 中栏灵感列表 / 右栏 AI 配置：与他山坊一致的 3/6/3 栏宽 */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <aside className="min-w-0 lg:col-span-3">
+          <form onSubmit={handleCreate} className="ui-card p-5">
         <textarea
           className="ui-input w-full p-3"
           rows={3}
@@ -221,7 +247,7 @@ export default function InspirationPanel() {
           value={content}
           onChange={(e) => setContent(e.target.value)}
         />
-        <div className="mt-3 flex items-center gap-3">
+        <div className="mt-3 flex flex-wrap items-center gap-3">
           <label className="text-sm text-ink-2">
             {t('sourceDateOptional')}
             <input
@@ -251,7 +277,9 @@ export default function InspirationPanel() {
           />
         </div>
       </form>
+        </aside>
 
+        <section className="min-w-0 space-y-6 lg:col-span-6">
       {preview && (
         <div className="rounded-card border border-accent-2 bg-accent-2-soft p-4 shadow-card">
           <div className="flex items-center gap-3">
@@ -350,9 +378,9 @@ export default function InspirationPanel() {
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
-      <ul className="ui-reveal space-y-2.5">
+      <ul ref={listRef} className="ui-reveal space-y-2.5">
         {pageItems.map((item) => (
-          <li key={item.id} className="ui-card p-4">
+          <li key={item.id} data-iid={item.id} className="ui-card p-4">
             {editingId === item.id ? (
               <div>
                 <textarea
@@ -471,7 +499,6 @@ export default function InspirationPanel() {
             {t('queueEmpty')}
           </li>
         )}
-        <li ref={listEndRef} className="h-px list-none" aria-hidden />
       </ul>
 
       {totalPages > 1 && (
@@ -509,6 +536,12 @@ export default function InspirationPanel() {
           </button>
         </div>
       )}
+        </section>
+
+        <aside className="min-w-0 lg:col-span-3">
+          <LlmSettingsCard />
+        </aside>
+      </div>
 
       {renameTarget && (
         <div className="ui-modal-mask fixed inset-0 z-10 flex items-center justify-center p-4">

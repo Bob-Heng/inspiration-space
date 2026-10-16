@@ -14,6 +14,7 @@ from app.ai import (
     LLMProvider,
     LLMUnavailableError,
     Message,
+    record_ai_call,
     run_structured_call,
 )
 from app.models import AiCall, Base
@@ -127,3 +128,16 @@ class TestStructuredPipeline:
 
         result = _run(db_session, '{"title": "  带空格  ", "score": 2}', validate_business=normalize)
         assert result.title == "带空格"
+
+    def test_模型名缺失时留痕为unknown(self, db_session):
+        # AI 不可用且模型名未解析（None）：不得触发非空约束导致 500
+        record_ai_call(
+            db_session,
+            provider="fake",
+            model=None,
+            prompt_version="demo.v1",
+            input_snapshot="[]",
+            output="调用失败：模拟不可用",
+        )
+        call = _only_ai_call(db_session)
+        assert call.model == "unknown"

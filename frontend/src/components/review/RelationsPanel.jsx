@@ -2,7 +2,6 @@ import { useLang } from '../../i18n'
 import ItemTitle from '../ItemTitle'
 import TranslatedText from '../TranslatedText'
 import { layerLabel, relationLabel, tagLabel } from '../../vocab'
-import LlmSettingsCard from './LlmSettingsCard'
 
 export default function RelationsPanel({ analysis, related }) {
   const { t, tf, lang } = useLang()
@@ -101,8 +100,6 @@ export default function RelationsPanel({ analysis, related }) {
           </ul>
         )}
       </div>
-
-      <LlmSettingsCard />
     </div>
   )
 }

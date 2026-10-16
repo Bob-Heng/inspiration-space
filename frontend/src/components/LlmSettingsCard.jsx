@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { api } from '../../api'
-import { useLang } from '../../i18n'
+import { api } from '../api'
+import { useLang } from '../i18n'
 
 /**
  * AI 服务设置卡片：选择服务商 → 填 API Key → 测试连接拉取可用模型 → 下拉选择模型 → 保存。

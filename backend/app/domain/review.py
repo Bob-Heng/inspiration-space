@@ -207,6 +207,8 @@ def undo_phase(db: Session, session: ReviewSession) -> ReviewSession:
         session.phase = "distill"
         session.analysis_json = None
         session.analysis_json_en = None
+        # 提炼观点暂存随回退作废（再次进入打磨时会重新暂存）
+        session.distilled_snapshot = None
         db.query(ReviewMessage).where(
             ReviewMessage.session_id == session.id,
             ReviewMessage.phase == "polish",
@@ -338,6 +340,8 @@ def apply_review_decision(
         check_session_transition(session.status, "completed")
         session.status = "completed"
         session.ended_at = utcnow()
+        # 提炼观点暂存只服务于打磨过程中的对照展示，采纳后即清空
+        session.distilled_snapshot = None
         db.commit()
         db.refresh(decision)
         db.refresh(viewpoint)

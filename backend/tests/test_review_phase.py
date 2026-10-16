@@ -17,7 +17,7 @@ from sqlalchemy.pool import StaticPool
 import app.db as app_db
 from app.ai import LLMProvider, Message
 from app.db import ensure_schema_upgrades
-from app.domain.review import open_review_session
+from app.domain.review import apply_review_decision, open_review_session, undo_phase
 from app.models import AiCall, Base, ReviewMessage, Viewpoint
 from app.routers import analysis as analysis_route
 from app.routers import review as review_route
@@ -52,6 +52,24 @@ DISTILL_NOT_READY_JSON = json.dumps(
     ensure_ascii=False,
 )
 
+POLISH_NOT_READY_JSON = json.dumps(
+    {
+        "reply": "打磨阶段的纯文本回复",
+        "ready_to_adopt": False,
+        "polished_viewpoint": None,
+    },
+    ensure_ascii=False,
+)
+
+POLISH_READY_JSON = json.dumps(
+    {
+        "reply": "就按这个表述定稿吧。",
+        "ready_to_adopt": True,
+        "polished_viewpoint": "打磨后的最终观点",
+    },
+    ensure_ascii=False,
+)
+
 
 class DistillProvider(LLMProvider):
     provider_name = "fake"
@@ -78,11 +96,35 @@ class ViewpointCheckProvider(LLMProvider):
 
 
 class PlainTextProvider(LLMProvider):
+    """打磨期结构化回复（未收敛）：reply 取回后即讨论区纯文本。"""
+
     provider_name = "fake"
     model = "fake-model"
 
     async def generate(self, messages: list[Message]) -> str:
-        return "打磨阶段的纯文本回复"
+        return POLISH_NOT_READY_JSON
+
+
+class ReadyAdoptProvider(LLMProvider):
+    """打磨期结构化回复（已形成共识）：附 ready_to_adopt 与最终正文。"""
+
+    provider_name = "fake"
+    model = "fake-model"
+
+    async def generate(self, messages: list[Message]) -> str:
+        return POLISH_READY_JSON
+
+
+class EnglishReplyProvider(LLMProvider):
+    """打磨期结构化回复（英文，未收敛）。"""
+
+    provider_name = "fake"
+    model = "fake-model"
+
+    async def generate(self, messages: list[Message]) -> str:
+        return json.dumps(
+            {"reply": "Sounds good.", "ready_to_adopt": False, "polished_viewpoint": None}
+        )
 
 
 class AnalysisProvider(LLMProvider):
@@ -574,6 +616,42 @@ class TestEnterPolish:
         assert exc_info.value.detail["code"] == "phase_conflict"
 
 
+class TestDistilledSnapshot:
+    """提炼观点暂存（distilled_snapshot）：进入打磨时写入，采纳/回退后清空。"""
+
+    def _enter(self, db, session):
+        return asyncio.run(
+            review_route.enter_polish(
+                session.id, EnterPolishRequest(draft="提炼草稿正文"), db=db
+            )
+        )
+
+    def test_进入打磨暂存提炼观点(self, db_session):
+        session = _open_session(db_session)
+        out = self._enter(db_session, session)
+        assert out.distilled_snapshot == "提炼草稿正文"
+        db_session.refresh(session)
+        assert session.distilled_snapshot == "提炼草稿正文"
+
+    def test_采纳后清空暂存(self, db_session):
+        session = _open_session(db_session)
+        self._enter(db_session, session)
+        apply_review_decision(
+            db_session, session, decision_type="accept", final_content="最终正文"
+        )
+        db_session.refresh(session)
+        assert session.status == "completed"
+        assert session.distilled_snapshot is None
+
+    def test_阶段回退清空暂存(self, db_session):
+        session = _open_session(db_session)
+        self._enter(db_session, session)
+        undo_phase(db_session, session)
+        db_session.refresh(session)
+        assert session.phase == "distill"
+        assert session.distilled_snapshot is None
+
+
 class TestPostMessageByPhase:
     def test_提炼收敛轮回复不落库(self, db_session):
         session = _open_session(db_session)
@@ -633,8 +711,74 @@ class TestPostMessageByPhase:
 
         assert pair.assistant_message.content == "打磨阶段的纯文本回复"
         assert pair.distill_signal is None
+        assert pair.polish_signal is None
         messages = db_session.query(ReviewMessage).order_by(ReviewMessage.id).all()
         assert [m.phase for m in messages] == ["polish", "polish"]
+
+    def test_打磨收敛轮回复不落库(self, db_session):
+        session = _open_session(db_session)
+        session.phase = "polish"
+        db_session.commit()
+
+        pair = asyncio.run(
+            review_route.post_message(
+                session.id,
+                ReviewMessageCreate(content="我同意这个表述"),
+                db=db_session,
+                provider=ReadyAdoptProvider(),
+            )
+        )
+
+        # ready_to_adopt=true：回复被压下（不落库、不进对话框），正文随信号携带
+        assert pair.assistant_message is None
+        assert pair.polish_signal is not None
+        assert pair.polish_signal.ready_to_adopt is True
+        assert pair.polish_signal.polished_viewpoint == "打磨后的最终观点"
+        assert pair.polish_signal.reply == "就按这个表述定稿吧。"
+        roles = [m.role for m in db_session.query(ReviewMessage).all()]
+        assert roles == ["user"]
+
+    def test_中文回复在英文界面按实际语言标记原文(self, db_session, monkeypatch):
+        # 模型未遵从"英文回复"指令时，原文按实际语言（zh）标记，而非界面语言（en）
+        from starlette.requests import Request as StarletteRequest
+        from app.domain.translation import make_bilingual as real_bilingual
+
+        monkeypatch.setattr(review_route, "make_bilingual", real_bilingual)
+        session = _open_session(db_session)
+        session.phase = "polish"
+        db_session.commit()
+        req = StarletteRequest({"type": "http", "headers": [(b"x-ui-lang", b"en")]})
+
+        pair = asyncio.run(
+            review_route.post_message(
+                session.id,
+                ReviewMessageCreate(content="继续讨论"),
+                db=db_session,
+                provider=PlainTextProvider(),
+                request=req,
+            )
+        )
+        assert pair.assistant_message.original_lang == "zh"
+        assert pair.assistant_message.content_zh == "打磨阶段的纯文本回复"
+
+    def test_英文回复按实际语言标记原文(self, db_session, monkeypatch):
+        from app.domain.translation import make_bilingual as real_bilingual
+
+        monkeypatch.setattr(review_route, "make_bilingual", real_bilingual)
+        session = _open_session(db_session)
+        session.phase = "polish"
+        db_session.commit()
+
+        pair = asyncio.run(
+            review_route.post_message(
+                session.id,
+                ReviewMessageCreate(content="继续讨论"),
+                db=db_session,
+                provider=EnglishReplyProvider(),
+            )
+        )
+        assert pair.assistant_message.original_lang == "en"
+        assert pair.assistant_message.content_en == "Sounds good."
 
 
 class TestPolishEntryOpening:
@@ -651,7 +795,7 @@ class TestPolishEntryOpening:
 
         out = asyncio.run(
             review_route.post_opening(
-                session.id, False, True, db=db_session, provider=PlainTextProvider()
+                session.id, True, db=db_session, provider=PlainTextProvider()
             )
         )
 
@@ -667,7 +811,7 @@ class TestPolishEntryOpening:
         with pytest.raises(HTTPException) as exc_info:
             asyncio.run(
                 review_route.post_opening(
-                    session.id, False, True, db=db_session, provider=PlainTextProvider()
+                    session.id, True, db=db_session, provider=PlainTextProvider()
                 )
             )
         assert exc_info.value.status_code == 409
@@ -681,7 +825,7 @@ class TestPolishEntryOpening:
         with pytest.raises(HTTPException) as exc_info:
             asyncio.run(
                 review_route.post_opening(
-                    session.id, False, True, db=db_session, provider=PlainTextProvider()
+                    session.id, True, db=db_session, provider=PlainTextProvider()
                 )
             )
         assert exc_info.value.status_code == 409

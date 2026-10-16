@@ -26,7 +26,7 @@ def record_ai_call(
     db: Session,
     *,
     provider: str,
-    model: str,
+    model: str | None,
     prompt_version: str,
     input_snapshot: str,
     output: str | None,
@@ -34,7 +34,8 @@ def record_ai_call(
     """AI 调用留痕：成功存原始输出，失败存错误摘要。独立提交，不随业务事务回滚。"""
     call = AiCall(
         provider=provider,
-        model=model,
+        # AI 不可用且模型名未解析时为 None：落 "unknown" 而非触发非空约束（500）
+        model=model or "unknown",
         prompt_version=prompt_version,
         input_snapshot=input_snapshot,
         output=output,

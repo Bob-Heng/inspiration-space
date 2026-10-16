@@ -13,18 +13,16 @@ AI 在讨论中只输出观点与提问，不落库任何业务数据；
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..ai import (
     LLMConfigError,
-    LLMError,
     LLMOutputError,
     LLMProvider,
     LLMUnavailableError,
     llm_provider_dependency,
-    record_ai_call,
     run_structured_call,
 )
 from ..ai.prompts.discussion import PROMPT_VERSION, build_discussion_messages
@@ -36,7 +34,7 @@ from ..ai.prompts.viewpoint_check import (
     PROMPT_VERSION as VIEWPOINT_CHECK_PROMPT_VERSION,
     build_viewpoint_check_messages,
 )
-from ..ai.schemas import DistillReply, ViewpointCheck
+from ..ai.schemas import DistillReply, PolishReply, ViewpointCheck
 from ..auth import require_user
 from ..db import get_db
 from ..errors import biz_error
@@ -50,13 +48,14 @@ from ..domain.review import (
     undo_phase,
 )
 from ..domain.titles import make_titles
-from ..domain.translation import make_bilingual
+from ..domain.translation import detect_lang, make_bilingual
 from ..models import Inspiration, ReviewMessage, ReviewSession, Viewpoint
 from ..schemas import (
     DecisionOut,
     DecisionRequest,
     DistillSignal,
     EnterPolishRequest,
+    PolishSignal,
     ReviewMessageCreate,
     ReviewMessageOut,
     ReviewMessagePair,
@@ -70,26 +69,46 @@ from ..schemas import (
 logger = logging.getLogger(__name__)
 
 
+# 结构化输出重试上限：模型偶发忘记 JSON 约定，连续失败最多尝试 5 次，
+# 仍失败抛 LLMOutputError 转 502（前端弹窗允许用户重试/取消）
+MAX_STRUCTURED_ATTEMPTS = 5
+
+
+async def _run_with_retries(db, provider, *, prompt_version, schema, messages):
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return await run_structured_call(
+                db,
+                provider,
+                prompt_version=prompt_version,
+                schema=schema,
+                messages=messages,
+            )
+        except LLMOutputError:
+            if attempt >= MAX_STRUCTURED_ATTEMPTS:
+                raise
+
+
 async def _run_distill_call(
     db: Session, provider: LLMProvider, messages: list
 ) -> DistillReply:
-    """提炼期结构化调用：长对话中模型偶发忘记 JSON 约定，解析失败自动重试一次。"""
-    try:
-        return await run_structured_call(
-            db,
-            provider,
-            prompt_version=DISTILL_PROMPT_VERSION,
-            schema=DistillReply,
-            messages=messages,
-        )
-    except LLMOutputError:
-        return await run_structured_call(
-            db,
-            provider,
-            prompt_version=DISTILL_PROMPT_VERSION,
-            schema=DistillReply,
-            messages=messages,
-        )
+    """提炼期结构化调用（重试上限见 MAX_STRUCTURED_ATTEMPTS）。"""
+    return await _run_with_retries(
+        db, provider,
+        prompt_version=DISTILL_PROMPT_VERSION, schema=DistillReply, messages=messages,
+    )
+
+
+async def _run_polish_call(
+    db: Session, provider: LLMProvider, messages: list
+) -> PolishReply:
+    """打磨期结构化调用（重试上限见 MAX_STRUCTURED_ATTEMPTS）。"""
+    return await _run_with_retries(
+        db, provider,
+        prompt_version=PROMPT_VERSION, schema=PolishReply, messages=messages,
+    )
 
 router = APIRouter(
     prefix="/api/review",
@@ -112,6 +131,11 @@ def _session_out(db: Session, session: ReviewSession) -> ReviewSessionOut:
         )
     )
     viewpoint = _session_viewpoint(db, session)
+    inspiration = (
+        db.get(Inspiration, viewpoint.source_inspiration_id)
+        if viewpoint.source_inspiration_id is not None
+        else None
+    )
     return ReviewSessionOut(
         id=session.id,
         viewpoint_id=session.viewpoint_id,
@@ -125,6 +149,17 @@ def _session_out(db: Session, session: ReviewSession) -> ReviewSessionOut:
         analysis_en=(
             json.loads(session.analysis_json_en) if session.analysis_json_en else None
         ),
+        distilled_snapshot=session.distilled_snapshot,
+        source_inspiration=(
+            {
+                "content": inspiration.content,
+                "content_zh": inspiration.content_zh,
+                "content_en": inspiration.content_en,
+                "original_lang": inspiration.original_lang,
+            }
+            if inspiration is not None
+            else None
+        ),
     )
 
 
@@ -133,6 +168,13 @@ def _get_session_or_404(session_id: int, db: Session) -> ReviewSession:
     if session is None:
         raise biz_error(404, "session_not_found", "审议会话不存在", "Review session not found")
     return session
+
+
+def _ui_lang(request: Request | None) -> str:
+    """界面语言（前端 X-UI-Lang 请求头）：只决定要求 AI 用哪种语言回复。
+    原文标记不以此为准——按回复实际语言检测（detect_lang），防止模型未遵从
+    语言指令时把中文原文误标为英文、译文方向随之颠倒。"""
+    return "en" if request is not None and request.headers.get("x-ui-lang") == "en" else "zh"
 
 
 @router.get("/queue", response_model=list[ReviewQueueItem])
@@ -280,6 +322,8 @@ async def enter_polish(
     if titles["title_zh"] is not None:
         viewpoint.title_zh = titles["title_zh"]
         viewpoint.title_en = titles["title_en"]
+    # 暂存提炼观点：打磨完成确认弹窗中栏对照展示，采纳/回退后清空
+    session.distilled_snapshot = viewpoint.content
     db.commit()
     db.refresh(session)
     return _session_out(db, session)
@@ -323,17 +367,16 @@ def undo_session_phase(session_id: int, db: Session = Depends(get_db)) -> Review
 @router.post("/sessions/{session_id}/opening", response_model=ReviewMessageOut | None)
 async def post_opening(
     session_id: int,
-    regenerate: bool = False,
     polish_entry: bool = False,
     db: Session = Depends(get_db),
     provider: LLMProvider = Depends(llm_provider_dependency),
+    request: Request = None,
 ):
     """AI 首问：AI 在讨论区主动提出它认为当前最重要的一个问题。
 
-    提炼阶段（distill）走结构化 DistillReply（只取回复正文，信号不随首问外露）；
-    打磨阶段（polish）沿用讨论 prompt 的自由文本。
-    会话已有消息时返回 None（不重复提问）。regenerate=True 时：
-    若用户尚未发言（讨论区只有 AI 首问），删除旧首问并按最新分析重新生成。
+    提炼/打磨阶段均走结构化调用（只取回复正文，信号不随首问外露），
+    回复语言跟随界面语言（X-UI-Lang）。
+    会话已有消息时返回 None（不重复提问）。
     polish_entry=True 时不受"已有消息"限制：用于提炼→打磨转换后，
     在保留的提炼讨论之后生成"进入打磨"的衔接首问（须已有分析）。
     失败抛 503/502 双语错误。
@@ -345,26 +388,14 @@ async def post_opening(
             "会话不在进行中，无法生成首问",
             "Session is not active",
         )
+    lang = _ui_lang(request)
     if polish_entry:
-        return await _polish_entry_opening(session, db, provider)
+        return await _polish_entry_opening(session, db, provider, lang)
     existing = db.scalar(
         select(ReviewMessage.id).where(ReviewMessage.session_id == session.id).limit(1)
     )
     if existing is not None:
-        if not regenerate:
-            return None
-        has_user_msg = db.scalar(
-            select(ReviewMessage.id)
-            .where(ReviewMessage.session_id == session.id, ReviewMessage.role == "user")
-            .limit(1)
-        )
-        if has_user_msg is not None:
-            return None  # 用户已发言，历史不动
-        db.query(ReviewMessage).where(
-            ReviewMessage.session_id == session.id,
-            ReviewMessage.role == "assistant",
-        ).delete()
-        db.commit()
+        return None
     subject = _session_viewpoint(db, session)
     viewpoints = list(
         db.scalars(
@@ -378,7 +409,7 @@ async def post_opening(
         "content": "（系统指令）请提出你判断在当前语境下最重要的一个问题，开启讨论。",
     }
     if session.phase == "distill":
-        messages = build_distill_messages(subject, viewpoints, [])
+        messages = build_distill_messages(subject, viewpoints, [], lang=lang)
         messages.append(opening_instruction)
         try:
             result = await _run_distill_call(db, provider, messages)
@@ -401,34 +432,28 @@ async def post_opening(
             if session.analysis_json
             else None
         )
-        messages = build_discussion_messages(subject, viewpoints, analysis, [])
+        messages = build_discussion_messages(subject, viewpoints, analysis, [], lang=lang)
         messages.append(opening_instruction)
         try:
-            reply = await provider.generate(messages)
-        except LLMUnavailableError as exc:
+            result = await _run_polish_call(db, provider, messages)
+        except (LLMUnavailableError, LLMConfigError) as exc:
             raise biz_error(
                 503, "ai_unavailable", str(exc),
                 "AI service is unavailable. Please check the AI service settings.",
             ) from exc
-        except (LLMConfigError, LLMError) as exc:
+        except LLMOutputError as exc:
             raise biz_error(
                 502, "ai_bad_output", str(exc),
                 "The AI returned output that failed validation. Please retry.",
             ) from exc
-        record_ai_call(
-            db,
-            provider=provider.provider_name,
-            model=provider.model,
-            prompt_version=PROMPT_VERSION,
-            input_snapshot=json.dumps(messages, ensure_ascii=False),
-            output=reply,
-        )
+        # 首问只取回复正文，采纳信号不随首问外露
+        reply = result.reply
     assistant_message = ReviewMessage(
         session_id=session.id,
         role="assistant",
         content=reply,
         phase=session.phase,
-        **await make_bilingual(db, reply, original_lang="zh"),
+        **await make_bilingual(db, reply, original_lang=detect_lang(reply)),
     )
     db.add(assistant_message)
     db.commit()
@@ -437,10 +462,11 @@ async def post_opening(
 
 
 async def _polish_entry_opening(
-    session: ReviewSession, db: Session, provider: LLMProvider
+    session: ReviewSession, db: Session, provider: LLMProvider, lang: str = "zh"
 ) -> ReviewMessageOut:
     """提炼→打磨转换后的首问：基于已定草稿的分析，在保留的提炼讨论之后，
-    用一句话衔接"已进入打磨"，再提出当前最重要的一个问题，保证对话连贯。"""
+    用一句话衔接"已进入打磨"，再提出当前最重要的一个问题，保证对话连贯。
+    lang 为界面语言，仅决定要求 AI 用哪种语言回复；原文标记按实际回复检测。"""
     if session.phase != "polish":
         raise biz_error(
             409, "phase_conflict",
@@ -471,7 +497,7 @@ async def _polish_entry_opening(
     from ..ai.schemas import AnalysisResult
 
     analysis = AnalysisResult.model_validate_json(session.analysis_json)
-    messages = build_discussion_messages(subject, viewpoints, analysis, history)
+    messages = build_discussion_messages(subject, viewpoints, analysis, history, lang=lang)
     messages.append(
         {
             "role": "user",
@@ -479,31 +505,25 @@ async def _polish_entry_opening(
         }
     )
     try:
-        reply = await provider.generate(messages)
-    except LLMUnavailableError as exc:
+        result = await _run_polish_call(db, provider, messages)
+    except (LLMUnavailableError, LLMConfigError) as exc:
         raise biz_error(
             503, "ai_unavailable", str(exc),
             "AI service is unavailable. Please check the AI service settings.",
         ) from exc
-    except (LLMConfigError, LLMError) as exc:
+    except LLMOutputError as exc:
         raise biz_error(
             502, "ai_bad_output", str(exc),
             "The AI returned output that failed validation. Please retry.",
         ) from exc
-    record_ai_call(
-        db,
-        provider=provider.provider_name,
-        model=provider.model,
-        prompt_version=PROMPT_VERSION,
-        input_snapshot=json.dumps(messages, ensure_ascii=False),
-        output=reply,
-    )
+    # 衔接首问只取回复正文，采纳信号不随首问外露
+    reply = result.reply
     assistant_message = ReviewMessage(
         session_id=session.id,
         role="assistant",
         content=reply,
         phase=session.phase,
-        **await make_bilingual(db, reply, original_lang="zh"),
+        **await make_bilingual(db, reply, original_lang=detect_lang(reply)),
     )
     db.add(assistant_message)
     db.commit()
@@ -517,12 +537,14 @@ async def post_message(
     payload: ReviewMessageCreate,
     db: Session = Depends(get_db),
     provider: LLMProvider = Depends(llm_provider_dependency),
+    request: Request = None,
 ) -> ReviewMessagePair:
     """用户发言：落库后调 LLM 生成回复，双方消息均落库，调用留痕 ai_calls。
 
     提炼阶段（distill）走结构化 DistillReply，返回的 pair 附 distill_signal
-    （收敛信号，含 ready_to_polish 与观点草稿）；打磨阶段（polish）走讨论 prompt，
-    distill_signal 为 None。
+    （收敛信号，含 ready_to_polish 与观点草稿）；打磨阶段（polish）走 PolishReply，
+    收敛时附 polish_signal（含 ready_to_adopt 与最终正文）。
+    AI 回复语言跟随界面语言（X-UI-Lang）；原文标记按实际回复语言检测。
     """
     session = _get_session_or_404(session_id, db)
     if session.status != "active":
@@ -533,6 +555,7 @@ async def post_message(
             f"Session is not active ({session.status}); cannot post",
         )
     subject = _session_viewpoint(db, session)
+    lang = _ui_lang(request)
 
     user_message = ReviewMessage(
         session_id=session.id,
@@ -562,7 +585,7 @@ async def post_message(
     distill_signal = None
     if session.phase == "distill":
         # 提炼阶段：结构化回复（reply + 收敛信号），留痕由 run_structured_call 完成
-        messages = build_distill_messages(subject, viewpoints, history)
+        messages = build_distill_messages(subject, viewpoints, history, lang=lang)
         try:
             result = await _run_distill_call(db, provider, messages)
         except (LLMUnavailableError, LLMConfigError) as exc:
@@ -593,50 +616,38 @@ async def post_message(
             distilled_viewpoint=result.distilled_viewpoint,
         )
     else:
-        messages = build_discussion_messages(subject, viewpoints, payload.analysis, history)
+        messages = build_discussion_messages(subject, viewpoints, payload.analysis, history, lang=lang)
         try:
-            reply = await provider.generate(messages)
-        except LLMUnavailableError as exc:
-            record_ai_call(
-                db,
-                provider=provider.provider_name,
-                model=provider.model,
-                prompt_version=PROMPT_VERSION,
-                input_snapshot=json.dumps(messages, ensure_ascii=False),
-                output=f"调用失败：{exc}",
-            )
+            result = await _run_polish_call(db, provider, messages)
+        except (LLMUnavailableError, LLMConfigError) as exc:
             raise biz_error(
                 503, "ai_unavailable", str(exc),
                 "AI service is unavailable. Please check the AI service settings.",
             ) from exc
-        except (LLMConfigError, LLMError) as exc:
-            record_ai_call(
-                db,
-                provider=provider.provider_name,
-                model=provider.model,
-                prompt_version=PROMPT_VERSION,
-                input_snapshot=json.dumps(messages, ensure_ascii=False),
-                output=f"调用失败：{exc}",
-            )
+        except LLMOutputError as exc:
             raise biz_error(
                 502, "ai_bad_output", str(exc),
                 "The AI returned output that failed validation. Please retry.",
             ) from exc
-
-        record_ai_call(
-            db,
-            provider=provider.provider_name,
-            model=provider.model,
-            prompt_version=PROMPT_VERSION,
-            input_snapshot=json.dumps(messages, ensure_ascii=False),
-            output=reply,
-        )
+        if result.ready_to_adopt:
+            # 采纳收敛轮：回复不落库、不进对话框——前端确认弹窗接管；用户选择
+            # 继续讨论时用 polish_signal.reply 临时展示该回复（刷新后不再出现）
+            return ReviewMessagePair(
+                user_message=ReviewMessageOut.model_validate(user_message),
+                assistant_message=None,
+                polish_signal=PolishSignal(
+                    ready_to_adopt=True,
+                    polished_viewpoint=result.polished_viewpoint,
+                    reply=result.reply,
+                ),
+            )
+        reply = result.reply
     assistant_message = ReviewMessage(
         session_id=session.id,
         role="assistant",
         content=reply,
         phase=session.phase,
-        **await make_bilingual(db, reply, original_lang="zh"),
+        **await make_bilingual(db, reply, original_lang=detect_lang(reply)),
     )
     db.add(assistant_message)
     db.commit()

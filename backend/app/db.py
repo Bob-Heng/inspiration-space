@@ -261,3 +261,11 @@ def ensure_schema_upgrades() -> None:
                 " WHERE started_at IS NULL"
             )
         )
+
+        # 8. review_sessions 补 distilled_snapshot 列：进入打磨时暂存提炼观点，
+        #    供打磨完成确认弹窗对照展示，采纳/回退后清空（存量会话为 NULL）
+        scols = {c["name"] for c in insp.get_columns("review_sessions")}
+        if "distilled_snapshot" not in scols:
+            conn.execute(
+                text("ALTER TABLE review_sessions ADD COLUMN distilled_snapshot TEXT")
+            )

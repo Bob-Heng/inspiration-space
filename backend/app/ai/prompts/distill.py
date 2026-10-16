@@ -42,27 +42,33 @@ def build_distill_messages(
     viewpoint: Viewpoint,
     viewpoints: list[Viewpoint],
     history: list[ReviewMessage],
+    lang: str = "zh",
 ) -> list[Message]:
     """组装提炼讨论上下文：观点正文（duck-type .content）+ 观点库快照 + 历史对话。
 
-    观点库快照由调用方过滤，只收 accepted 观点。"""
+    观点库快照由调用方过滤，只收 accepted 观点。
+    lang 为界面语言：AI 回复语言跟随界面语言（与用户使用何种语言发言无关）。"""
     context = f"""正在讨论的灵感：
 {viewpoint.content}
 
 {_viewpoint_snapshot(viewpoints)}
 
 以下是本次讨论的记录，请继续讨论。"""
+    system = SYSTEM_PROMPT.replace(
+        "全程使用中文。", "全程使用英文。" if lang == "en" else "全程使用中文。"
+    )
     messages: list[Message] = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": context},
     ]
     for message in history:
         messages.append({"role": message.role, "content": message.content})
-    # 格式提醒压在最后：对话变长后模型容易忘记 JSON 约定，回退成纯文本聊天
-    messages.append(
-        {
-            "role": "user",
-            "content": "（系统指令）无论对话进行到何处，回复都必须严格只输出一个符合上述结构的 JSON 对象，不要输出任何其他文字。",
-        }
+    # 格式提醒压在最后：对话变长后模型容易忘记 JSON 约定，回退成纯文本聊天；
+    # 英文界面时语言要求一并压在最后（提高遵从度）
+    reminder = (
+        "（系统指令）无论对话进行到何处，回复都必须严格只输出一个符合上述结构的 JSON 对象，不要输出任何其他文字，并全程使用英文。"
+        if lang == "en"
+        else "（系统指令）无论对话进行到何处，回复都必须严格只输出一个符合上述结构的 JSON 对象，不要输出任何其他文字。"
     )
+    messages.append({"role": "user", "content": reminder})
     return messages
