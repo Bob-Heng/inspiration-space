@@ -6,11 +6,13 @@
 reply 中不得提及该机制。AI 不落库任何业务数据。
 """
 
+import json
+
 from ...models import ReviewMessage, Viewpoint
 from ..base import Message
 from .analysis import _viewpoint_snapshot
 
-PROMPT_VERSION = "distill.v4"
+PROMPT_VERSION = "distill.v5"
 
 SYSTEM_PROMPT = """你是"灵感空间"系统中的思考伙伴，正与人类围绕一条记录下来的灵感聊天。这条灵感还不是一个明确的观点，它可能只是一个现象、一段素材或一个疑问。你的角色是陪人类把它想清楚。
 
@@ -62,7 +64,15 @@ def build_distill_messages(
         {"role": "user", "content": context},
     ]
     for message in history:
-        messages.append({"role": message.role, "content": message.content})
+        content = message.content
+        if message.role == "assistant":
+            # 库里的历史 AI 发言是解析后的 reply 散文；以散文形态回传会让模型模仿先例、
+            # 丢掉 JSON 约定（同 discussion.v5 十连拒 JSON 事故）。回传时还原为结构化形态。
+            content = json.dumps(
+                {"reply": content, "ready_to_polish": False, "distilled_viewpoint": None},
+                ensure_ascii=False,
+            )
+        messages.append({"role": message.role, "content": content})
     # 格式提醒压在最后：对话变长后模型容易忘记 JSON 约定，回退成纯文本聊天；
     # 英文界面时语言要求一并压在最后（提高遵从度）
     reminder = (

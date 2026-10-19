@@ -13,7 +13,7 @@ from ..base import Message
 from ..schemas import AnalysisResult
 from .analysis import _viewpoint_snapshot
 
-PROMPT_VERSION = "discussion.v5"
+PROMPT_VERSION = "discussion.v6"
 
 SYSTEM_PROMPT = """你是"灵感空间"系统中的思考伙伴，正与人类围绕一条观点进行打磨讨论。这条观点已有初步表述，你们的目标是一起把它的措辞与边界想清楚，直到双方认可。最终采纳权在人类。
 
@@ -74,7 +74,15 @@ def build_discussion_messages(
         {"role": "user", "content": context},
     ]
     for message in history:
-        messages.append({"role": message.role, "content": message.content})
+        content = message.content
+        if message.role == "assistant":
+            # 库里的历史 AI 发言是解析后的 reply 散文；以散文形态回传会让模型模仿先例、
+            # 丢掉 JSON 约定（真实事故：discussion.v5 十连拒 JSON）。回传时还原为结构化形态。
+            content = json.dumps(
+                {"reply": content, "ready_to_adopt": False, "polished_viewpoint": None},
+                ensure_ascii=False,
+            )
+        messages.append({"role": message.role, "content": content})
     # 格式提醒压在最后：对话变长后模型容易忘记 JSON 约定，回退成纯文本聊天；
     # 英文界面时语言要求一并压在最后（提高遵从度）
     reminder = (
