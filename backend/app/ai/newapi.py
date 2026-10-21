@@ -1,5 +1,6 @@
 """New API Provider：本地 New API 网关（OpenAI 兼容协议），见 docs/04 D7。"""
 
+import asyncio
 import logging
 
 import httpx2
@@ -19,6 +20,29 @@ logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 120.0
 PROBE_TIMEOUT = 5.0
+
+# 瞬态错误（上游 5xx / 429 / 超时）在 Provider 层统一重试：网关内存保护、上游限流等
+# 故障通常数秒内自愈，直接抛给用户会打断打磨流程（真实事故：网关内存保护触发 503 风暴）。
+TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
+TRANSIENT_ATTEMPTS = 3
+TRANSIENT_BACKOFF = (2.0, 5.0)
+
+
+def _status_detail(exc: APIStatusError) -> str:
+    """从上游错误响应体中提取可读原因（如网关的 system memory overloaded），取不到给通用提示。"""
+    detail: str | None = None
+    body = exc.body
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            detail = err.get("message")
+        elif isinstance(err, str):
+            detail = err
+        detail = detail or body.get("message")
+    if not detail:
+        return "请检查服务与渠道状态"
+    detail = str(detail).strip()
+    return detail[:120] if detail else "请检查服务与渠道状态"
 
 
 class NewAPIProvider(LLMProvider):
@@ -70,26 +94,38 @@ class NewAPIProvider(LLMProvider):
 
     async def generate(self, messages: list[Message]) -> str:
         model = await self._resolve_model()
-        try:
-            response = await self._client.chat.completions.create(
-                model=model, messages=messages
-            )
-        except APITimeoutError as exc:
-            raise LLMUnavailableError(
-                f"{self.label}响应超时（>{int(REQUEST_TIMEOUT)} 秒），请稍后重试"
-            ) from exc
-        except APIConnectionError as exc:
-            raise LLMUnavailableError(
-                f"{self.label}不可达，请检查服务地址与网络（本地网关请确认已启动）"
-            ) from exc
-        except AuthenticationError as exc:
-            raise LLMUnavailableError(
-                f"{self.label}令牌无效，请在「AI 服务设置」中检查 API Key"
-            ) from exc
-        except APIStatusError as exc:
-            raise LLMUnavailableError(
-                f"{self.label}返回错误（HTTP {exc.status_code}），请检查服务与渠道状态"
-            ) from exc
+        response = None
+        for attempt in range(TRANSIENT_ATTEMPTS):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=model, messages=messages
+                )
+                break
+            except APITimeoutError as exc:
+                if attempt < TRANSIENT_ATTEMPTS - 1:
+                    await asyncio.sleep(TRANSIENT_BACKOFF[attempt])
+                    continue
+                raise LLMUnavailableError(
+                    f"{self.label}响应超时（>{int(REQUEST_TIMEOUT)} 秒），请稍后重试"
+                ) from exc
+            except APIConnectionError as exc:
+                raise LLMUnavailableError(
+                    f"{self.label}不可达，请检查服务地址与网络（本地网关请确认已启动）"
+                ) from exc
+            except AuthenticationError as exc:
+                raise LLMUnavailableError(
+                    f"{self.label}令牌无效，请在「AI 服务设置」中检查 API Key"
+                ) from exc
+            except APIStatusError as exc:
+                if (
+                    exc.status_code in TRANSIENT_STATUS_CODES
+                    and attempt < TRANSIENT_ATTEMPTS - 1
+                ):
+                    await asyncio.sleep(TRANSIENT_BACKOFF[attempt])
+                    continue
+                raise LLMUnavailableError(
+                    f"{self.label}返回错误（HTTP {exc.status_code}）：{_status_detail(exc)}"
+                ) from exc
         if not response.choices or not response.choices[0].message.content:
             raise LLMOutputError("AI 返回内容为空")
         return response.choices[0].message.content
