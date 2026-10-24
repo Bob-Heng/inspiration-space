@@ -41,10 +41,12 @@ from ..models import (
     ReviewDecision,
     ReviewMessage,
     ReviewSession,
+    ReviewToolCall,
     Viewpoint,
     ViewpointRelation,
 )
 from ..timeutils import utcnow
+from .review_queries import get_accepted_by_display_id
 from .tags import InvalidTagError, LAYER_CODES, validate_layer, validate_tags
 from .viewpoint_state import (
     InvalidTransitionError,
@@ -164,6 +166,7 @@ def undo_last_message(db: Session, session: ReviewSession) -> ReviewSession:
     if last is None:
         return session
     deleted_role = last.role
+    deleted_turn_ids = {last.id} if last.role == "user" else set()
     db.delete(last)
     db.flush()
     if deleted_role == "assistant":
@@ -174,7 +177,20 @@ def undo_last_message(db: Session, session: ReviewSession) -> ReviewSession:
             .limit(1)
         ).first()
         if new_last is not None and new_last.role == "user":
+            deleted_turn_ids.add(new_last.id)
             db.delete(new_last)
+        if new_last is None:
+            # 首问没有对应用户消息，turn_id=0 的工具记录随首问一并撤销
+            db.query(ReviewToolCall).where(
+                ReviewToolCall.session_id == session.id,
+                ReviewToolCall.phase == phase,
+                ReviewToolCall.turn_id == 0,
+            ).delete(synchronize_session=False)
+    if deleted_turn_ids:
+        db.query(ReviewToolCall).where(
+            ReviewToolCall.session_id == session.id,
+            ReviewToolCall.turn_id.in_(deleted_turn_ids),
+        ).delete(synchronize_session=False)
     db.commit()
     return session
 
@@ -213,10 +229,17 @@ def undo_phase(db: Session, session: ReviewSession) -> ReviewSession:
             ReviewMessage.session_id == session.id,
             ReviewMessage.phase == "polish",
         ).delete(synchronize_session=False)
+        db.query(ReviewToolCall).where(
+            ReviewToolCall.session_id == session.id,
+            ReviewToolCall.phase == "polish",
+        ).delete(synchronize_session=False)
     else:
         # distill → 重置：清空全部消息，观点正文恢复为关联灵感原文
         db.query(ReviewMessage).where(
             ReviewMessage.session_id == session.id
+        ).delete(synchronize_session=False)
+        db.query(ReviewToolCall).where(
+            ReviewToolCall.session_id == session.id
         ).delete(synchronize_session=False)
         if viewpoint is not None and viewpoint.source_inspiration_id is not None:
             inspiration = db.get(Inspiration, viewpoint.source_inspiration_id)
@@ -316,11 +339,16 @@ def apply_review_decision(
         for relation in relations or []:
             if relation.type not in RELATION_TYPES:
                 raise ReviewError(f"非法关系类型：{relation.type}")
-            if relation.viewpoint_id == viewpoint.id:
-                raise ReviewError("观点不得与自身建立关系")
-            target = db.get(Viewpoint, relation.viewpoint_id)
+            if relation.display_id is not None:
+                target = get_accepted_by_display_id(db, relation.display_id)
+            else:
+                # 兼容旧分析：当时 viewpoint_id 存的是内部主键
+                target = db.get(Viewpoint, relation.viewpoint_id)
+            number = relation.display_id if relation.display_id is not None else relation.viewpoint_id
             if target is None:
-                raise ReviewError(f"关系目标观点不存在：#{relation.viewpoint_id}")
+                raise ReviewError(f"关系目标观点不存在：#{number}")
+            if target.id == viewpoint.id:
+                raise ReviewError("观点不得与自身建立关系")
             # 只建行：冲突/相近均不联动双方状态
             db.add(
                 ViewpointRelation(

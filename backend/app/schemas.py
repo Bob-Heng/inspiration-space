@@ -129,6 +129,19 @@ class ReviewQueueItem(BaseModel):
     phase: str = "distill"
 
 
+class ReviewToolCallOut(BaseModel):
+    call_id: str
+    session_id: int
+    turn_id: int
+    phase: str
+    tool: str
+    target: int | Literal["current"]
+    status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ReviewSessionOut(BaseModel):
     id: int
     viewpoint_id: int
@@ -138,6 +151,7 @@ class ReviewSessionOut(BaseModel):
     ended_at: datetime | None
     viewpoint: ViewpointOut  # 本会话打磨的观点（主关联，必然存在）
     messages: list[ReviewMessageOut] = []
+    tool_calls: list[ReviewToolCallOut] = []
     analysis: dict | None = None
     analysis_en: dict | None = None
     # 进入打磨时暂存的提炼观点（打磨完成确认弹窗中栏对照用）

@@ -5,11 +5,12 @@ AI 只输出建议，裁决权在人类；分析结果只是建议，正式落�
 
 import json
 
+from ...domain.review_queries import display_id
 from ...domain.tags import LAYER_LABELS, TAG_VOCABULARIES
 from ...models import Viewpoint
 from ..base import Message
 
-PROMPT_VERSION = "analysis.v3"
+PROMPT_VERSION = "analysis.v4"
 
 FAMILY_NAMES = {"domain": "领域", "circle": "圈层", "discipline": "学科", "scene": "场景"}
 
@@ -27,7 +28,7 @@ SYSTEM_PROMPT = f"""你是"灵感空间"系统中的审议分析器。对一条�
    - 分层三选一：道=元假设（对世界/人性的根本设定，暂不求证）；法=机制规律（世界如何运转的可检验判断）；术=方法策略（面对某类问题该怎么做的操作原则）。判不准时问：这句话在说"世界是什么/怎么运转"（道/法），还是"该怎么做"（术）。
    - 四个标签族，每族最多选一个，拿不准就留空（null），宁缺毋滥；取值必须来自下列词表：
 {TAG_VOCABULARY_TEXT}
-3. 与观点库中已有观点的相近/冲突关系。只能引用快照中真实存在的观点 id；确实没有就返回空数组，不得编造。
+3. 与观点库中已有观点的相近/冲突关系。只能引用快照中真实存在的 display_id（即界面展示编号）；确实没有就返回空数组，不得编造。
 
 输出要求：只输出一个 JSON 对象，不得输出任何其他文字、解释或 Markdown 围栏。JSON 结构严格如下（键名与层级不得改动）：
 {{
@@ -35,7 +36,7 @@ SYSTEM_PROMPT = f"""你是"灵感空间"系统中的审议分析器。对一条�
   "strongest_counterargument": "反对采纳的最强理由",
   "layer": "道 或 法 或 术",
   "tags": {{"domain": null, "circle": null, "discipline": null, "scene": null}},
-  "relations": [{{"viewpoint_id": 0, "type": "similar 或 conflict"}}]
+  "relations": [{{"display_id": 0, "type": "similar 或 conflict"}}]
 }}
 """
 
@@ -45,7 +46,7 @@ def _viewpoint_snapshot(viewpoints: list[Viewpoint]) -> str:
         return "观点库当前为空，没有任何已有观点。"
     snapshot = [
         {
-            "id": vp.id,
+            "display_id": display_id(vp),
             "layer": LAYER_LABELS.get(vp.layer) if vp.layer else None,
             "tags": {
                 "domain": vp.domain,

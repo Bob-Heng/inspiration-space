@@ -1,8 +1,8 @@
 """AI 结构化输出 Schema（设计说明书 §11.2）。"""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
@@ -17,10 +17,42 @@ class AnalysisTags(BaseModel):
 
 
 class AnalysisRelation(BaseModel):
-    """与已有观点的相近/冲突关系建议。"""
+    """与已有观点的相近/冲突关系建议。新分析使用展示编号；旧内部 id 仅作兼容。"""
 
-    viewpoint_id: int
+    viewpoint_id: int | None = None
+    display_id: int | None = None
     type: str  # similar / conflict，业务校验把关
+
+    @model_validator(mode="after")
+    def _has_number(self):
+        if self.display_id is None and self.viewpoint_id is None:
+            raise ValueError("关联观点必须包含 display_id")
+        return self
+
+
+class DiscussionTurn(BaseModel):
+    """讨论的一轮输出：要么请求查询，要么给出正式回复，二者互斥。"""
+
+    tool: Literal["get_current_viewpoint", "get_accepted_viewpoint"] | None = None
+    display_id: int | None = None
+    reply: NonEmptyStr | None = None
+    ready_to_polish: bool = False
+    distilled_viewpoint: str | None = None
+    ready_to_adopt: bool = False
+    polished_viewpoint: str | None = None
+
+    @model_validator(mode="after")
+    def _tool_or_reply(self):
+        if self.tool is None and self.reply is None:
+            raise ValueError("讨论输出必须包含 reply 或 tool")
+        if self.tool is not None:
+            if self.reply is not None:
+                raise ValueError("查询请求不得同时包含 reply")
+            if self.tool == "get_accepted_viewpoint" and self.display_id is None:
+                raise ValueError("查询已入库观点必须包含 display_id")
+            if self.tool == "get_current_viewpoint":
+                self.display_id = None
+        return self
 
 
 class AnalysisResult(BaseModel):

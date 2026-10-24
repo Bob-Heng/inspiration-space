@@ -24,8 +24,9 @@ from ..auth import require_user
 from ..db import get_db
 from ..errors import biz_error
 from ..domain.analysis import validate_analysis_result
+from ..domain.review_queries import display_id
 from ..domain.translation import bilingual_analysis
-from ..models import ReviewMessage, ReviewSession, Viewpoint
+from ..models import ReviewMessage, ReviewSession, ReviewToolCall, Viewpoint
 
 router = APIRouter(
     prefix="/api/viewpoints",
@@ -52,7 +53,7 @@ async def analyze_viewpoint(
             .order_by(Viewpoint.id)
         )
     )
-    existing_ids = {vp.id for vp in viewpoints}
+    existing_ids = {display_id(vp) for vp in viewpoints}
     # 分析结果持久化到该观点的 active 会话，关窗重开后随会话恢复
     active_session = db.scalar(
         select(ReviewSession).where(
@@ -65,6 +66,10 @@ async def analyze_viewpoint(
         db.query(ReviewMessage).where(
             ReviewMessage.session_id == active_session.id,
             ReviewMessage.phase == "polish",
+        ).delete(synchronize_session=False)
+        db.query(ReviewToolCall).where(
+            ReviewToolCall.session_id == active_session.id,
+            ReviewToolCall.phase == "polish",
         ).delete(synchronize_session=False)
         db.commit()
     # 分析对象为观点正文（草稿观点正文即提炼产物，docs/04 D9）

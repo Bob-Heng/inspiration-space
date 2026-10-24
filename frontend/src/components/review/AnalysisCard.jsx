@@ -71,7 +71,7 @@ export default function AnalysisCard({ analysis, loading, onAnalyze }) {
             {analysis.relations?.length ? (
               <ul className="space-y-1">
                 {analysis.relations.map((rel) => (
-                  <li key={`${rel.type}-${rel.viewpoint_id}`}>
+                  <li key={`${rel.type}-${rel.display_id ?? rel.viewpoint_id}`}>
                     <span
                       className={`mr-1 rounded-pill px-1.5 py-0.5 text-xs ${
                         rel.type === 'conflict'
@@ -81,7 +81,7 @@ export default function AnalysisCard({ analysis, loading, onAnalyze }) {
                     >
                       {relationLabel(rel.type, lang)}
                     </span>
-                    {tf('viewpointN', { id: rel.viewpoint_id })}
+                    {tf('viewpointN', { id: rel.display_id ?? rel.viewpoint_id })}
                   </li>
                 ))}
               </ul>

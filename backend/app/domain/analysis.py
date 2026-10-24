@@ -9,6 +9,7 @@ import logging
 
 from ..ai.errors import BusinessValidationError
 from ..ai.schemas import AnalysisResult
+from .review_queries import relation_display_id
 from .tags import InvalidTagError, LAYER_CODES, TAG_VOCABULARIES, validate_tag
 
 logger = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ def validate_analysis_result(
 
     kept, dropped = [], []
     for relation in result.relations:
-        if relation.type in RELATION_TYPES and relation.viewpoint_id in existing_viewpoint_ids:
+        if relation.type in RELATION_TYPES and relation_display_id(relation) in existing_viewpoint_ids:
             kept.append(relation)
         else:
             dropped.append(relation)
@@ -40,7 +41,11 @@ def validate_analysis_result(
         logger.warning(
             "AI 建议的关系含无效条目，已剔除：%s",
             [
-                {"viewpoint_id": r.viewpoint_id, "type": r.type}
+                {
+                    "display_id": relation_display_id(r),
+                    "viewpoint_id": r.viewpoint_id,
+                    "type": r.type,
+                }
                 for r in dropped
             ],
         )

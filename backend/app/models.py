@@ -135,6 +135,26 @@ class ReviewDecision(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
 
 
+class ReviewToolCall(Base):
+    """讨论期按需查询留痕。只保存终态；running 由 SSE 实时事件呈现。
+
+    turn_id 普通发言为对应用户消息 id，首问为 0；target 为 current 或展示编号。
+    """
+
+    __tablename__ = "review_tool_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    call_id: Mapped[str] = mapped_column(String(40), unique=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("review_sessions.id"))
+    turn_id: Mapped[int] = mapped_column(default=0)
+    phase: Mapped[str] = mapped_column(String(10), default="polish")
+    tool: Mapped[str] = mapped_column(String(40))
+    target: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(20))
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, server_default=func.now())
+
+
 class LlmSetting(Base):
     """AI 服务设置（单行，id 固定为 1）。界面配置优先于环境变量（docs/04 D7 的扩展）。"""
 

@@ -3,17 +3,21 @@
 AI 在讨论中只输出观点与提问，不落库任何业务数据；
 正式落库只由决策接口（TASK-011，仅采纳）完成。
 
-两阶段：提炼（distill）→ 打磨（polish）。提炼期讨论走结构化 DistillReply
-（回复 + 收敛信号），观点判断与进入打磨由本模块的专用端点完成。
+两阶段：提炼（distill）→ 打磨（polish）。讨论统一走 DiscussionTurn
+（正式回复或按需查询请求），观点判断与进入打磨由本模块的专用端点完成。
+讨论不再预装全库快照；查询进度通过 SSE 呈现，终态记录随会话生命周期管理。
 撤销分两档：消息级撤销（/undo，只删当前阶段末轮）与阶段级回退
 （/undo-phase，polish→distill 清分析与打磨消息；distill→重置恢复观点原文）。
 待打磨队列（/queue）为全站 draft 观点。
 """
 
+import asyncio
 import json
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -34,7 +38,7 @@ from ..ai.prompts.viewpoint_check import (
     PROMPT_VERSION as VIEWPOINT_CHECK_PROMPT_VERSION,
     build_viewpoint_check_messages,
 )
-from ..ai.schemas import DistillReply, PolishReply, ViewpointCheck
+from ..ai.schemas import DiscussionTurn, ViewpointCheck
 from ..auth import require_user
 from ..db import get_db
 from ..errors import biz_error
@@ -47,9 +51,21 @@ from ..domain.review import (
     undo_last_message,
     undo_phase,
 )
+from ..domain.review_queries import (
+    ACCEPTED_TOOL,
+    analysis_for_display,
+    canonicalize_analysis,
+    execute_review_tool,
+)
 from ..domain.titles import make_titles
 from ..domain.translation import detect_lang, make_bilingual
-from ..models import Inspiration, ReviewMessage, ReviewSession, Viewpoint
+from ..models import (
+    Inspiration,
+    ReviewMessage,
+    ReviewSession,
+    ReviewToolCall,
+    Viewpoint,
+)
 from ..schemas import (
     DecisionOut,
     DecisionRequest,
@@ -62,6 +78,7 @@ from ..schemas import (
     ReviewQueueItem,
     ReviewSessionCreate,
     ReviewSessionOut,
+    ReviewToolCallOut,
     ViewpointCheckOut,
     ViewpointOut,
 )
@@ -91,24 +108,98 @@ async def _run_with_retries(db, provider, *, prompt_version, schema, messages):
                 raise
 
 
-async def _run_distill_call(
-    db: Session, provider: LLMProvider, messages: list
-) -> DistillReply:
-    """提炼期结构化调用（重试上限见 MAX_STRUCTURED_ATTEMPTS）。"""
+async def _run_discussion_call(
+    db: Session, provider: LLMProvider, messages: list, phase: str
+) -> DiscussionTurn:
+    """一轮讨论输出：可能是正式回复，也可能是一个按需查询请求。"""
     return await _run_with_retries(
         db, provider,
-        prompt_version=DISTILL_PROMPT_VERSION, schema=DistillReply, messages=messages,
+        prompt_version=DISTILL_PROMPT_VERSION if phase == "distill" else PROMPT_VERSION,
+        schema=DiscussionTurn,
+        messages=messages,
     )
 
 
-async def _run_polish_call(
-    db: Session, provider: LLMProvider, messages: list
-) -> PolishReply:
-    """打磨期结构化调用（重试上限见 MAX_STRUCTURED_ATTEMPTS）。"""
-    return await _run_with_retries(
-        db, provider,
-        prompt_version=PROMPT_VERSION, schema=PolishReply, messages=messages,
+def _tool_history(db: Session, session_id: int) -> list[ReviewToolCall]:
+    return list(
+        db.scalars(
+            select(ReviewToolCall)
+            .where(ReviewToolCall.session_id == session_id)
+            .order_by(ReviewToolCall.id)
+        )
     )
+
+
+async def _run_discussion_with_tools(
+    db: Session,
+    session: ReviewSession,
+    provider: LLMProvider,
+    messages: list,
+    turn_id: int,
+    emit=None,
+) -> DiscussionTurn:
+    """执行“回复或查询”循环，直至模型给出正式回复；最多连续查询 8 次。"""
+    for _ in range(8):
+        result = await _run_discussion_call(db, provider, messages, session.phase)
+        if result.tool is None:
+            return result
+        target = "current" if result.tool != ACCEPTED_TOOL else str(result.display_id)
+        call_id = uuid.uuid4().hex
+        if emit:
+            emit(
+                "tool",
+                {
+                    "call_id": call_id,
+                    "status": "running",
+                    "tool": result.tool,
+                    "target": target,
+                    "turn_id": turn_id,
+                },
+            )
+        status_value = "completed"
+        try:
+            query_result = execute_review_tool(db, session, result.tool, target)
+        except Exception as exc:
+            logger.exception("讨论查询工具执行失败：%s", result.tool)
+            status_value = "failed"
+            query_result = {"error": "query_failed", "message": str(exc)}
+        record = ReviewToolCall(
+            call_id=call_id,
+            session_id=session.id,
+            turn_id=turn_id,
+            phase=session.phase,
+            tool=result.tool,
+            target=target,
+            status=status_value,
+            result_json=json.dumps(query_result, ensure_ascii=False),
+        )
+        db.add(record)
+        db.commit()
+        if emit:
+            emit(
+                "tool",
+                {
+                    "call_id": call_id,
+                    "status": status_value,
+                    "tool": result.tool,
+                    "target": target,
+                    "turn_id": turn_id,
+                },
+            )
+        request_json = {"tool": result.tool}
+        if result.tool == ACCEPTED_TOOL:
+            request_json["display_id"] = result.display_id
+        messages = [
+            *messages,
+            {"role": "assistant", "content": json.dumps(request_json, ensure_ascii=False)},
+            {
+                "role": "user",
+                "content": "（系统指令）刚才的查询已完成，结果如下。请据此继续：需要其他观点可再次查询，否则输出正式回复。\n"
+                + json.dumps(query_result, ensure_ascii=False),
+            },
+        ]
+    raise LLMOutputError("AI 连续请求查询次数过多，已中止本轮讨论")
+
 
 router = APIRouter(
     prefix="/api/review",
@@ -145,10 +236,11 @@ def _session_out(db: Session, session: ReviewSession) -> ReviewSessionOut:
         ended_at=session.ended_at,
         viewpoint=ViewpointOut.model_validate(viewpoint),
         messages=[ReviewMessageOut.model_validate(m) for m in messages],
-        analysis=json.loads(session.analysis_json) if session.analysis_json else None,
-        analysis_en=(
-            json.loads(session.analysis_json_en) if session.analysis_json_en else None
-        ),
+        tool_calls=[
+            ReviewToolCallOut.model_validate(c) for c in _tool_history(db, session.id)
+        ],
+        analysis=analysis_for_display(db, session.analysis_json),
+        analysis_en=analysis_for_display(db, session.analysis_json_en),
         distilled_snapshot=session.distilled_snapshot,
         source_inspiration=(
             {
@@ -364,6 +456,74 @@ def undo_session_phase(session_id: int, db: Session = Depends(get_db)) -> Review
     db.refresh(session)
     return _session_out(db, session)
 
+
+def _sse_response(db: Session, session: ReviewSession, impl, result_key: str):
+    """把一次性讨论调用包装成 SSE：tool 进度、done 快照、error 双语失败。"""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def emit(event: str, data: dict) -> None:
+        queue.put_nowait((event, data))
+
+    async def runner() -> None:
+        try:
+            result = await impl(emit)
+        except HTTPException as exc:
+            detail = exc.detail
+            payload = (
+                {
+                    "message": detail.get("zh"),
+                    "message_en": detail.get("en"),
+                    "code": detail.get("code"),
+                }
+                if isinstance(detail, dict)
+                else {"message": str(detail), "message_en": str(detail)}
+            )
+            queue.put_nowait(("error", payload))
+        except Exception:
+            logger.exception("讨论流式调用失败")
+            queue.put_nowait(
+                (
+                    "error",
+                    {
+                        "message": "讨论生成失败，请重试",
+                        "message_en": "Failed to generate the discussion response",
+                    },
+                )
+            )
+        else:
+            dumped = result.model_dump(mode="json") if result is not None else None
+            queue.put_nowait(
+                (
+                    "done",
+                    {
+                        "session": _session_out(db, session).model_dump(mode="json"),
+                        result_key: dumped,
+                    },
+                )
+            )
+        finally:
+            queue.put_nowait(None)
+
+    async def stream():
+        task = asyncio.create_task(runner())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event, data = item
+                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/sessions/{session_id}/opening", response_model=ReviewMessageOut | None)
 async def post_opening(
     session_id: int,
@@ -371,6 +531,27 @@ async def post_opening(
     db: Session = Depends(get_db),
     provider: LLMProvider = Depends(llm_provider_dependency),
     request: Request = None,
+):
+    if request and "text/event-stream" in request.headers.get("accept", ""):
+        session = _get_session_or_404(session_id, db)
+        return _sse_response(
+            db,
+            session,
+            lambda emit: _post_opening_impl(
+                session_id, polish_entry, db, provider, request, emit
+            ),
+            "message",
+        )
+    return await _post_opening_impl(session_id, polish_entry, db, provider, request)
+
+
+async def _post_opening_impl(
+    session_id: int,
+    polish_entry: bool = False,
+    db: Session = Depends(get_db),
+    provider: LLMProvider = Depends(llm_provider_dependency),
+    request: Request = None,
+    emit=None,
 ):
     """AI 首问：AI 在讨论区主动提出它认为当前最重要的一个问题。
 
@@ -390,40 +571,21 @@ async def post_opening(
         )
     lang = _ui_lang(request)
     if polish_entry:
-        return await _polish_entry_opening(session, db, provider, lang)
+        return await _polish_entry_opening(session, db, provider, lang, emit)
     existing = db.scalar(
         select(ReviewMessage.id).where(ReviewMessage.session_id == session.id).limit(1)
     )
     if existing is not None:
         return None
     subject = _session_viewpoint(db, session)
-    viewpoints = list(
-        db.scalars(
-            select(Viewpoint)
-            .where(Viewpoint.status == "accepted")
-            .order_by(Viewpoint.id)
-        )
-    )
     opening_instruction = {
         "role": "user",
         "content": "（系统指令）请提出你判断在当前语境下最重要的一个问题，开启讨论。",
     }
     if session.phase == "distill":
-        messages = build_distill_messages(subject, viewpoints, [], lang=lang)
-        messages.append(opening_instruction)
-        try:
-            result = await _run_distill_call(db, provider, messages)
-        except (LLMUnavailableError, LLMConfigError) as exc:
-            raise biz_error(
-                503, "ai_unavailable", str(exc),
-                "AI service is unavailable. Please check the AI service settings.",
-            ) from exc
-        except LLMOutputError as exc:
-            raise biz_error(
-                502, "ai_bad_output", str(exc),
-                "The AI returned output that failed validation. Please retry.",
-            ) from exc
-        reply = result.reply
+        messages = build_distill_messages(
+            subject, [], lang=lang, tool_history=_tool_history(db, session.id)
+        )
     else:
         from ..ai.schemas import AnalysisResult
 
@@ -432,22 +594,28 @@ async def post_opening(
             if session.analysis_json
             else None
         )
-        messages = build_discussion_messages(subject, viewpoints, analysis, [], lang=lang)
-        messages.append(opening_instruction)
-        try:
-            result = await _run_polish_call(db, provider, messages)
-        except (LLMUnavailableError, LLMConfigError) as exc:
-            raise biz_error(
-                503, "ai_unavailable", str(exc),
-                "AI service is unavailable. Please check the AI service settings.",
-            ) from exc
-        except LLMOutputError as exc:
-            raise biz_error(
-                502, "ai_bad_output", str(exc),
-                "The AI returned output that failed validation. Please retry.",
-            ) from exc
-        # 首问只取回复正文，采纳信号不随首问外露
-        reply = result.reply
+        if analysis is not None:
+            analysis = canonicalize_analysis(db, analysis)
+        messages = build_discussion_messages(
+            subject, analysis, [], lang=lang, tool_history=_tool_history(db, session.id)
+        )
+    messages.append(opening_instruction)
+    try:
+        result = await _run_discussion_with_tools(
+            db, session, provider, messages, turn_id=0, emit=emit
+        )
+    except (LLMUnavailableError, LLMConfigError) as exc:
+        raise biz_error(
+            503, "ai_unavailable", str(exc),
+            "AI service is unavailable. Please check the AI service settings.",
+        ) from exc
+    except LLMOutputError as exc:
+        raise biz_error(
+            502, "ai_bad_output", str(exc),
+            "The AI returned output that failed validation. Please retry.",
+        ) from exc
+    # 首问只取回复正文，收敛信号不随首问外露
+    reply = result.reply
     assistant_message = ReviewMessage(
         session_id=session.id,
         role="assistant",
@@ -462,7 +630,11 @@ async def post_opening(
 
 
 async def _polish_entry_opening(
-    session: ReviewSession, db: Session, provider: LLMProvider, lang: str = "zh"
+    session: ReviewSession,
+    db: Session,
+    provider: LLMProvider,
+    lang: str = "zh",
+    emit=None,
 ) -> ReviewMessageOut:
     """提炼→打磨转换后的首问：基于已定草稿的分析，在保留的提炼讨论之后，
     用一句话衔接"已进入打磨"，再提出当前最重要的一个问题，保证对话连贯。
@@ -480,13 +652,6 @@ async def _polish_entry_opening(
             "Analysis is not available yet",
         )
     subject = _session_viewpoint(db, session)
-    viewpoints = list(
-        db.scalars(
-            select(Viewpoint)
-            .where(Viewpoint.status == "accepted")
-            .order_by(Viewpoint.id)
-        )
-    )
     history = list(
         db.scalars(
             select(ReviewMessage)
@@ -496,8 +661,16 @@ async def _polish_entry_opening(
     )
     from ..ai.schemas import AnalysisResult
 
-    analysis = AnalysisResult.model_validate_json(session.analysis_json)
-    messages = build_discussion_messages(subject, viewpoints, analysis, history, lang=lang)
+    analysis = canonicalize_analysis(
+        db, AnalysisResult.model_validate_json(session.analysis_json)
+    )
+    messages = build_discussion_messages(
+        subject,
+        analysis,
+        history,
+        lang=lang,
+        tool_history=_tool_history(db, session.id),
+    )
     messages.append(
         {
             "role": "user",
@@ -505,7 +678,9 @@ async def _polish_entry_opening(
         }
     )
     try:
-        result = await _run_polish_call(db, provider, messages)
+        result = await _run_discussion_with_tools(
+            db, session, provider, messages, turn_id=0, emit=emit
+        )
     except (LLMUnavailableError, LLMConfigError) as exc:
         raise biz_error(
             503, "ai_unavailable", str(exc),
@@ -538,12 +713,32 @@ async def post_message(
     db: Session = Depends(get_db),
     provider: LLMProvider = Depends(llm_provider_dependency),
     request: Request = None,
+):
+    if request and "text/event-stream" in request.headers.get("accept", ""):
+        session = _get_session_or_404(session_id, db)
+        return _sse_response(
+            db,
+            session,
+            lambda emit: _post_message_impl(
+                session_id, payload, db, provider, request, emit
+            ),
+            "pair",
+        )
+    return await _post_message_impl(session_id, payload, db, provider, request)
+
+
+async def _post_message_impl(
+    session_id: int,
+    payload: ReviewMessageCreate,
+    db: Session = Depends(get_db),
+    provider: LLMProvider = Depends(llm_provider_dependency),
+    request: Request = None,
+    emit=None,
 ) -> ReviewMessagePair:
     """用户发言：落库后调 LLM 生成回复，双方消息均落库，调用留痕 ai_calls。
 
-    提炼阶段（distill）走结构化 DistillReply，返回的 pair 附 distill_signal
-    （收敛信号，含 ready_to_polish 与观点草稿）；打磨阶段（polish）走 PolishReply，
-    收敛时附 polish_signal（含 ready_to_adopt 与最终正文）。
+    提炼与打磨统一走 DiscussionTurn：模型可请求按需查询，也可给出正式回复；
+    提炼收敛时 pair 附 distill_signal，打磨收敛时附 polish_signal。
     AI 回复语言跟随界面语言（X-UI-Lang）；原文标记按实际回复语言检测。
     """
     session = _get_session_or_404(session_id, db)
@@ -568,13 +763,6 @@ async def post_message(
     db.commit()
     db.refresh(user_message)
 
-    viewpoints = list(
-        db.scalars(
-            select(Viewpoint)
-            .where(Viewpoint.status == "accepted")
-            .order_by(Viewpoint.id)
-        )
-    )
     history = list(
         db.scalars(
             select(ReviewMessage)
@@ -585,9 +773,13 @@ async def post_message(
     distill_signal = None
     if session.phase == "distill":
         # 提炼阶段：结构化回复（reply + 收敛信号），留痕由 run_structured_call 完成
-        messages = build_distill_messages(subject, viewpoints, history, lang=lang)
+        messages = build_distill_messages(
+            subject, history, lang=lang, tool_history=_tool_history(db, session.id)
+        )
         try:
-            result = await _run_distill_call(db, provider, messages)
+            result = await _run_discussion_with_tools(
+                db, session, provider, messages, user_message.id, emit
+            )
         except (LLMUnavailableError, LLMConfigError) as exc:
             raise biz_error(
                 503, "ai_unavailable", str(exc),
@@ -616,9 +808,22 @@ async def post_message(
             distilled_viewpoint=result.distilled_viewpoint,
         )
     else:
-        messages = build_discussion_messages(subject, viewpoints, payload.analysis, history, lang=lang)
+        analysis = (
+            canonicalize_analysis(db, payload.analysis)
+            if payload.analysis is not None
+            else None
+        )
+        messages = build_discussion_messages(
+            subject,
+            analysis,
+            history,
+            lang=lang,
+            tool_history=_tool_history(db, session.id),
+        )
         try:
-            result = await _run_polish_call(db, provider, messages)
+            result = await _run_discussion_with_tools(
+                db, session, provider, messages, user_message.id, emit
+            )
         except (LLMUnavailableError, LLMConfigError) as exc:
             raise biz_error(
                 503, "ai_unavailable", str(exc),

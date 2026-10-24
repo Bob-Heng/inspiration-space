@@ -42,6 +42,141 @@ async function request(path, options = {}) {
   return data
 }
 
+async function requestEventStream(path, options = {}, { onTool } = {}) {
+  const lang = localStorage.getItem('inspiration_lang') || 'zh'
+  let res
+  try {
+    res = await fetch(BASE_URL + path, {
+      credentials: 'include',
+      ...options,
+      headers: {
+        Accept: 'text/event-stream',
+        'X-UI-Lang': lang,
+        ...(options.headers ?? {}),
+      },
+    })
+  } catch {
+    throw new ApiError(
+      0,
+      lang === 'en'
+        ? 'Cannot reach the backend. Please make sure it is running (double-click 启动.bat).'
+        : '无法连接后端，请确认后端已启动（可双击 启动.bat）',
+    )
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => null)
+    let detail = data?.detail
+    if (detail && typeof detail === 'object') {
+      detail = detail[lang] ?? detail.zh
+    }
+    throw new ApiError(
+      res.status,
+      detail ?? (lang === 'en' ? `Request failed (${res.status})` : `请求失败（${res.status}）`),
+    )
+  }
+  if (!res.body) {
+    throw new ApiError(
+      0,
+      lang === 'en' ? 'The AI response stream is unavailable.' : 'AI 响应流不可用，请重试。',
+    )
+  }
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let eventType = 'message'
+  let dataLines = []
+  let doneData
+
+  function dispatchEvent() {
+    if (dataLines.length === 0) {
+      eventType = 'message'
+      return
+    }
+    const raw = dataLines.join('\n')
+    const currentEvent = eventType
+    eventType = 'message'
+    dataLines = []
+    let data
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      throw new ApiError(
+        0,
+        lang === 'en' ? 'The AI response stream is invalid.' : 'AI 响应流格式异常，请重试。',
+      )
+    }
+    if (currentEvent === 'tool') {
+      onTool?.(data)
+    } else if (currentEvent === 'done') {
+      doneData = data
+    } else if (currentEvent === 'error') {
+      const error = new ApiError(
+        0,
+        (lang === 'en' ? data.message_en ?? data.message : data.message) ??
+          (lang === 'en' ? 'AI generation failed.' : 'AI 生成失败，请重试。'),
+      )
+      error.code = data.code
+      throw error
+    }
+  }
+
+  function consumeLine(line) {
+    if (line.endsWith('\r')) line = line.slice(0, -1)
+    if (line === '') {
+      dispatchEvent()
+      return
+    }
+    if (line.startsWith(':')) return
+    const colon = line.indexOf(':')
+    const field = colon === -1 ? line : line.slice(0, colon)
+    let value = colon === -1 ? '' : line.slice(colon + 1)
+    if (value.startsWith(' ')) value = value.slice(1)
+    if (field === 'event') eventType = value
+    if (field === 'data') dataLines.push(value)
+  }
+
+  function consumeBuffer() {
+    let newline = buffer.indexOf('\n')
+    while (newline !== -1) {
+      const line = buffer.slice(0, newline)
+      buffer = buffer.slice(newline + 1)
+      consumeLine(line)
+      newline = buffer.indexOf('\n')
+    }
+  }
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      consumeBuffer()
+    }
+    buffer += decoder.decode()
+    consumeBuffer()
+    if (buffer) consumeLine(buffer)
+    if (dataLines.length > 0) dispatchEvent()
+  } catch (err) {
+    await reader.cancel().catch(() => {})
+    if (err instanceof ApiError) throw err
+    throw new ApiError(
+      0,
+      lang === 'en' ? 'The AI response stream was interrupted.' : 'AI 响应流中断，请重试。',
+    )
+  } finally {
+    reader.releaseLock()
+  }
+
+  if (doneData === undefined) {
+    throw new ApiError(
+      0,
+      lang === 'en' ? 'The AI response stream ended unexpectedly.' : 'AI 响应流意外结束，请重试。',
+    )
+  }
+  return doneData
+}
+
 export const api = {
   login(username, password) {
     const body = new URLSearchParams({ username, password })
@@ -139,9 +274,13 @@ export const api = {
     })
   },
 
-  postOpeningQuestion(sessionId, polishEntry = false) {
+  postOpeningQuestion(sessionId, polishEntry = false, handlers = {}) {
     const qs = polishEntry ? '?polish_entry=true' : ''
-    return request(`/api/review/sessions/${sessionId}/opening${qs}`, { method: 'POST' })
+    return requestEventStream(
+      `/api/review/sessions/${sessionId}/opening${qs}`,
+      { method: 'POST' },
+      handlers,
+    )
   },
   getReviewQueue: () => request('/api/review/queue'),
   startReviewSession(viewpointId) {
@@ -152,18 +291,23 @@ export const api = {
     })
   },
   getActiveSession: () => request('/api/review/sessions/active'),
+  getReviewSession: (id) => request(`/api/review/sessions/${id}`),
   // 消息级撤销：删当前阶段最后一条消息（AI 回复连同其用户提问）
   undoReviewSession: (id) =>
     request(`/api/review/sessions/${id}/undo`, { method: 'POST' }),
   // 阶段级回退：polish→distill 清分析与打磨消息；distill→重置清空并恢复观点原文
   undoReviewPhase: (id) =>
     request(`/api/review/sessions/${id}/undo-phase`, { method: 'POST' }),
-  sendReviewMessage(id, payload) {
-    return request(`/api/review/sessions/${id}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
+  sendReviewMessage(id, payload, handlers = {}) {
+    return requestEventStream(
+      `/api/review/sessions/${id}/messages`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      handlers,
+    )
   },
   submitReviewDecision(id, payload) {
     return request(`/api/review/sessions/${id}/decision`, {
@@ -174,6 +318,7 @@ export const api = {
   },
 
   getViewpoint: (id) => request(`/api/viewpoints/${id}`),
+  getViewpointByDisplayId: (id) => request(`/api/viewpoints/display/${id}`),
 
   listViewpoints(filters = {}) {
     const params = new URLSearchParams()

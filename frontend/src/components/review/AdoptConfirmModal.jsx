@@ -13,6 +13,8 @@ import {
   tagLabel,
 } from '../../vocab'
 
+const relationId = (relation) => relation.display_id ?? relation.viewpoint_id
+
 function TagSelect({ label, options, value, onChange }) {
   const { t, lang } = useLang()
   return (
@@ -71,7 +73,7 @@ export default function AdoptConfirmModal({
     scene: analysis?.tags?.scene ?? '',
   })
   const [selectedRelations, setSelectedRelations] = useState(
-    new Set((analysis?.relations ?? []).map((r) => r.viewpoint_id)),
+    new Set((analysis?.relations ?? []).map(relationId)),
   )
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
@@ -132,8 +134,12 @@ export default function AdoptConfirmModal({
         scene: tags.scene || null,
       },
       relations: (analysis?.relations ?? [])
-        .filter((r) => selectedRelations.has(r.viewpoint_id))
-        .map((r) => ({ viewpoint_id: r.viewpoint_id, type: r.type })),
+        .filter((r) => selectedRelations.has(relationId(r)))
+        .map((r) => ({
+          display_id: r.display_id ?? null,
+          viewpoint_id: r.viewpoint_id ?? null,
+          type: r.type,
+        })),
     }
     if (layer) payload.layer = layer
     setSubmitting(true)
@@ -244,15 +250,15 @@ export default function AdoptConfirmModal({
             <ul className="mt-1 space-y-1">
               {analysis.relations.map((rel) => {
                 const vp = related.find(
-                  (r) => r.relation.viewpoint_id === rel.viewpoint_id,
+                  (r) => relationId(r.relation) === relationId(rel),
                 )?.viewpoint
                 return (
-                  <li key={`${rel.type}-${rel.viewpoint_id}`}>
+                  <li key={`${rel.type}-${relationId(rel)}`}>
                     <label className="flex items-center gap-2 text-sm text-ink">
                       <input
                         type="checkbox"
-                        checked={selectedRelations.has(rel.viewpoint_id)}
-                        onChange={() => toggleRelation(rel.viewpoint_id)}
+                        checked={selectedRelations.has(relationId(rel))}
+                        onChange={() => toggleRelation(relationId(rel))}
                       />
                       <span
                         className={`rounded-pill px-1.5 py-0.5 text-xs ${
@@ -265,7 +271,7 @@ export default function AdoptConfirmModal({
                       </span>
                       <span className="min-w-0 truncate">
                         <span className="font-mono text-accent">
-                          #{vp?.source_inspiration_id ?? rel.viewpoint_id}
+                          #{vp?.source_inspiration_id ?? relationId(rel)}
                         </span>{' '}
                         {vp ? summarize(vp.content, 40) : ''}
                       </span>

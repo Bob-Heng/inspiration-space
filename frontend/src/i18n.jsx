@@ -128,6 +128,11 @@ export const STRINGS = {
     ai: 'AI',
     copy: '复制',
     copied: '已复制',
+    toolQueryRunning: '正在查询',
+    toolQueryCompleted: '已完成查询',
+    toolQueryFailed: '查询失败',
+    toolCurrentViewpoint: '当前观点',
+    toolViewpointN: '观点 #{id}',
     // 提炼 → 打磨
     enterPolish: '进入打磨',
     polishEntryTitle: '已构成观点',
@@ -423,6 +428,11 @@ export const STRINGS = {
     ai: 'AI',
     copy: 'Copy',
     copied: 'Copied',
+    toolQueryRunning: 'Querying',
+    toolQueryCompleted: 'Query completed',
+    toolQueryFailed: 'Query failed',
+    toolCurrentViewpoint: 'Current viewpoint',
+    toolViewpointN: 'Viewpoint #{id}',
     enterPolish: 'Enter polishing',
     polishEntryTitle: 'Already a viewpoint',
     polishEntryBody:

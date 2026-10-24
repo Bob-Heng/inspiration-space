@@ -5,7 +5,6 @@
 不联动任何状态（含冲突）。
 """
 
-import json
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,6 +15,7 @@ from ..auth import require_user
 from ..db import get_db
 from ..errors import biz_error
 from ..domain.review import withdraw_viewpoint
+from ..domain.review_queries import analysis_for_display, get_accepted_by_display_id
 from ..domain.tags import InvalidTagError, validate_tag
 from ..domain.viewpoint_state import InvalidTransitionError
 from ..domain.viewpoints import (
@@ -31,6 +31,7 @@ from ..models import (
     ReviewDecision,
     ReviewMessage,
     ReviewSession,
+    ReviewToolCall,
     Viewpoint,
 )
 from ..schemas import (
@@ -38,6 +39,7 @@ from ..schemas import (
     LayerCode,
     RelationCreate,
     RelationOut,
+    ReviewToolCallOut,
     ViewpointOut,
     ViewpointTitleUpdate,
 )
@@ -138,6 +140,14 @@ def get_classified(db: Session = Depends(get_db)) -> ClassifiedOut:
     return ClassifiedOut(**result)
 
 
+@router.get("/display/{display_id}", response_model=ViewpointOut)
+def get_viewpoint_by_display_id(display_id: int, db: Session = Depends(get_db)) -> Viewpoint:
+    viewpoint = get_accepted_by_display_id(db, display_id)
+    if viewpoint is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="已入库观点不存在")
+    return viewpoint
+
+
 @router.get("/{viewpoint_id}", response_model=ViewpointOut)
 def get_viewpoint(viewpoint_id: int, db: Session = Depends(get_db)) -> Viewpoint:
     return _get_or_404(viewpoint_id, db)
@@ -166,6 +176,13 @@ def get_review_history(viewpoint_id: int, db: Session = Depends(get_db)) -> dict
         .where(ReviewDecision.session_id == session.id)
         .order_by(ReviewDecision.id.desc())
     )
+    tool_calls = list(
+        db.scalars(
+            select(ReviewToolCall)
+            .where(ReviewToolCall.session_id == session.id)
+            .order_by(ReviewToolCall.id)
+        )
+    )
     return {
         "exists": True,
         "session": {
@@ -174,6 +191,7 @@ def get_review_history(viewpoint_id: int, db: Session = Depends(get_db)) -> dict
             "started_at": session.started_at,
             "ended_at": session.ended_at,
         },
+        "tool_calls": [ReviewToolCallOut.model_validate(c).model_dump() for c in tool_calls],
         "messages": [
             {
                 "id": m.id,
@@ -196,10 +214,8 @@ def get_review_history(viewpoint_id: int, db: Session = Depends(get_db)) -> dict
             if decision
             else None
         ),
-        "analysis": json.loads(session.analysis_json) if session.analysis_json else None,
-        "analysis_en": (
-            json.loads(session.analysis_json_en) if session.analysis_json_en else None
-        ),
+        "analysis": analysis_for_display(db, session.analysis_json),
+        "analysis_en": analysis_for_display(db, session.analysis_json_en),
     }
 
 

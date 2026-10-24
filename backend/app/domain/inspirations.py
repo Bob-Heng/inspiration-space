@@ -14,6 +14,7 @@ from ..models import (
     ReviewDecision,
     ReviewMessage,
     ReviewSession,
+    ReviewToolCall,
     Viewpoint,
     ViewpointRelation,
 )
@@ -110,6 +111,9 @@ def reset_sessions_for_edit(db: Session, viewpoint: Viewpoint) -> None:
         db.query(ReviewMessage).where(
             ReviewMessage.session_id == session.id
         ).delete(synchronize_session=False)
+        db.query(ReviewToolCall).where(
+            ReviewToolCall.session_id == session.id
+        ).delete(synchronize_session=False)
 
 
 def cascade_delete_inspiration(db: Session, inspiration: Inspiration) -> dict:
@@ -131,6 +135,9 @@ def cascade_delete_inspiration(db: Session, inspiration: Inspiration) -> dict:
     ]
     guard_s = session_ids or [0]
 
+    db.query(ReviewToolCall).where(
+        ReviewToolCall.session_id.in_(guard_s)
+    ).delete(synchronize_session=False)
     n_messages = db.query(ReviewMessage).where(
         ReviewMessage.session_id.in_(guard_s)
     ).delete(synchronize_session=False)

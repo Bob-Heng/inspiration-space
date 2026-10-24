@@ -50,10 +50,74 @@ export default function ReviewPage() {
   const [adoptPrompt, setAdoptPrompt] = useState(null) // null | { draft, reply }
   // 首问生成失败：顶部红色提示（不自动消失），可重试/取消
   const [aiFailure, setAiFailure] = useState(null) // null | { message, retry }
+  const [activeToolCalls, setActiveToolCalls] = useState([])
   const attemptedRef = useRef(null)
   const queueAsideRef = useRef(null)
+  const discussionRequestRef = useRef(0)
+  const discussionBusyRef = useRef(false)
 
   const phase = session?.phase ?? 'polish'
+
+  function clearDiscussionRuntime() {
+    discussionRequestRef.current += 1
+    discussionBusyRef.current = false
+    setSending(false)
+    setActiveToolCalls([])
+    setAiFailure(null)
+  }
+
+  function beginDiscussionRequest(s) {
+    if (discussionBusyRef.current) return null
+    const request = {
+      id: discussionRequestRef.current + 1,
+      sessionId: s.id,
+      phase: s.phase ?? 'polish',
+    }
+    discussionRequestRef.current = request.id
+    discussionBusyRef.current = true
+    setSending(true)
+    setActiveToolCalls([])
+    setAiFailure(null)
+    return request
+  }
+
+  function isDiscussionRequestCurrent(request) {
+    return discussionRequestRef.current === request.id
+  }
+
+  function finishDiscussionRequest(request) {
+    if (!isDiscussionRequestCurrent(request)) return
+    discussionBusyRef.current = false
+    setSending(false)
+  }
+
+  function recordToolCall(request, toolCall) {
+    if (!isDiscussionRequestCurrent(request) || !toolCall?.call_id) return
+    const nextCall = {
+      ...toolCall,
+      session_id: toolCall.session_id ?? request.sessionId,
+      phase: toolCall.phase ?? request.phase,
+    }
+    setActiveToolCalls((current) => {
+      const index = current.findIndex((call) => call.call_id === nextCall.call_id)
+      if (index === -1) return [...current, nextCall]
+      const next = [...current]
+      next[index] = { ...next[index], ...nextCall }
+      return next
+    })
+  }
+
+  async function reconcileDiscussionSession(request) {
+    try {
+      const fresh = await api.getReviewSession(request.sessionId)
+      if (!isDiscussionRequestCurrent(request)) return null
+      setSession(fresh)
+      setActiveToolCalls([])
+      return fresh
+    } catch {
+      return null
+    }
+  }
 
   // 待打磨队列 = draft 观点列表（id 为观点 id，title_* 为关联灵感标题，仅作工作名）
   const loadQueue = useCallback(async () => {
@@ -78,6 +142,7 @@ export default function ReviewPage() {
     // 已有分析即为重新生成：后端会先清空打磨阶段对话（提炼对话保留），需二次确认
     const regen = Boolean(current.analysis ?? analysis)
     if (regen && !window.confirm(t('regenerateConfirm'))) return
+    if (regen) clearDiscussionRuntime()
     setAnalysisLoading(true)
     setError(null)
     try {
@@ -86,6 +151,7 @@ export default function ReviewPage() {
       // 重新生成时后端已清空打磨对话，会话体一并回拉替换，保持消息与分析一致
       const fresh = await api.getActiveSession().catch(() => null)
       const related = await fetchRelations(result.relations)
+      if (regen) clearDiscussionRuntime()
       // 原子落地：分析/英译/关联观点同帧出现，避免分栏陆续蹦出
       setAnalysis(result)
       setAnalysisEn(fresh?.analysis_en ?? null)
@@ -95,7 +161,7 @@ export default function ReviewPage() {
       await loadQueue()
       if (regen) {
         // 打磨讨论已被后端清空：请 AI 重发"进入打磨"的衔接首问
-        await requestPolishEntryOpening(current)
+        await requestPolishEntryOpening(fresh ?? current)
       }
     } catch (err) {
       setError(err.message)
@@ -105,6 +171,7 @@ export default function ReviewPage() {
   }, [session, analysis, analysisLoading, loadQueue, t])
 
   const openSession = useCallback(async (viewpointId) => {
+    clearDiscussionRuntime()
     setSessionLoading(true)
     setError(null)
     setNotice(null)
@@ -141,6 +208,7 @@ export default function ReviewPage() {
         await maybeRequestOpening(s)
       }
     } catch (err) {
+      clearDiscussionRuntime()
       setSession(null)
       setAnalysis(null)
       setAnalysisEn(null)
@@ -157,7 +225,9 @@ export default function ReviewPage() {
     return Promise.all(
       relations.map(async (relation) => {
         try {
-          const viewpoint = await api.getViewpoint(relation.viewpoint_id)
+          const viewpoint = relation.display_id != null
+            ? await api.getViewpointByDisplayId(relation.display_id)
+            : await api.getViewpoint(relation.viewpoint_id)
           return { relation, viewpoint }
         } catch {
           return { relation, viewpoint: null }
@@ -176,6 +246,7 @@ export default function ReviewPage() {
 
   // 会话 + 分析 + 英译 + 关联观点：同一次同步块内全部落地（React 批处理为一帧）
   function applyBundle(s, bundle) {
+    clearDiscussionRuntime()
     setSession(s)
     setAnalysis(bundle.analysis)
     setAnalysisEn(bundle.analysisEn)
@@ -187,35 +258,58 @@ export default function ReviewPage() {
   async function maybeRequestOpening(s) {
     if ((s?.messages?.length ?? 0) > 0) return
     if (!s?.analysis && (s?.phase ?? 'polish') !== 'distill') return
-    setAiFailure(null)
-    try {
-      const opening = await api.postOpeningQuestion(s.id)
-      if (opening) {
-        setSession((cur) =>
-          cur && cur.id === s.id
-            ? { ...cur, messages: [...cur.messages, opening] }
-            : cur,
-        )
-      }
-    } catch (err) {
-      setAiFailure({ message: err.message, retry: () => maybeRequestOpening(s) })
-    }
+    await runOpeningQuestion(s, false, null)
   }
 
   // 提炼→打磨转换后的衔接首问（保留的提炼讨论之后，须已有分析）
-  async function requestPolishEntryOpening(s) {
-    setAiFailure(null)
+  async function requestPolishEntryOpening(s, baselineMessages = null) {
+    if (!s) return
+    const baseline = baselineMessages ?? new Set(
+      (s.messages ?? []).map((message) => `${message.id}:${message.created_at ?? ''}`),
+    )
+    if (
+      baselineMessages &&
+      (s.messages ?? []).some(
+        (message) =>
+          message.role === 'assistant' &&
+          !baseline.has(`${message.id}:${message.created_at ?? ''}`),
+      )
+    ) {
+      setAiFailure(null)
+      return
+    }
+    await runOpeningQuestion(s, true, baseline)
+  }
+
+  async function runOpeningQuestion(s, polishEntry, baselineMessages) {
+    const request = beginDiscussionRequest(s)
+    if (!request) return
     try {
-      const opening = await api.postOpeningQuestion(s.id, true)
-      if (opening) {
-        setSession((cur) =>
-          cur && cur.id === s.id
-            ? { ...cur, messages: [...cur.messages, opening] }
-            : cur,
+      const result = await api.postOpeningQuestion(s.id, polishEntry, {
+        onTool: (toolCall) => recordToolCall(request, toolCall),
+      })
+      if (!isDiscussionRequestCurrent(request)) return
+      setSession(result.session)
+      setActiveToolCalls([])
+    } catch (err) {
+      if (!isDiscussionRequestCurrent(request)) return
+      const fresh = await reconcileDiscussionSession(request)
+      if (!isDiscussionRequestCurrent(request)) return
+      if (!fresh) {
+        setActiveToolCalls((current) =>
+          current.filter((toolCall) => toolCall.status !== 'running'),
         )
       }
-    } catch (err) {
-      setAiFailure({ message: err.message, retry: () => requestPolishEntryOpening(s) })
+      const retrySession = fresh ?? s
+      setAiFailure({
+        message: err.message,
+        retry: () =>
+          polishEntry
+            ? requestPolishEntryOpening(retrySession, baselineMessages)
+            : maybeRequestOpening(retrySession),
+      })
+    } finally {
+      finishDiscussionRequest(request)
     }
   }
 
@@ -256,50 +350,60 @@ export default function ReviewPage() {
   }, [searchParams, session, openSession])
 
   function handleSelect(viewpointId) {
+    clearDiscussionRuntime()
     attemptedRef.current = null
     setSearchParams({ viewpoint: String(viewpointId) })
   }
 
   async function handleSend(content) {
-    if (!session || sending) return false
-    setSending(true)
+    if (!session) return false
+    const currentSession = session
+    const request = beginDiscussionRequest(currentSession)
+    if (!request) return false
     setError(null)
     try {
-      const { user_message, assistant_message, distill_signal, polish_signal } =
-        await api.sendReviewMessage(session.id, {
+      const result = await api.sendReviewMessage(
+        currentSession.id,
+        {
           content,
           analysis: analysis ?? undefined,
-        })
-      // 收敛轮 assistant_message 为 null：回复被弹窗接管，不进对话框
-      setSession((s) => ({
-        ...s,
-        messages: [
-          ...s.messages,
-          user_message,
-          ...(assistant_message ? [assistant_message] : []),
-        ],
-      }))
+        },
+        { onTool: (toolCall) => recordToolCall(request, toolCall) },
+      )
+      if (!isDiscussionRequestCurrent(request)) return false
+      const nextSession = result.session
+      const { distill_signal, polish_signal } = result.pair
+      setSession(nextSession)
+      setActiveToolCalls([])
       // 提炼信号（仅 distill 阶段非空）：保存最近一次；AI 判定收敛时弹收敛弹窗
       if (distill_signal) {
         setDistillSignal(distill_signal)
-        if (distill_signal.ready_to_polish && phase === 'distill') {
+        if (distill_signal.ready_to_polish && request.phase === 'distill') {
           setPhaseError(null)
           setPhaseModal('ready')
         }
       }
       // 打磨收敛信号（仅 polish 阶段非空）：AI 判定已形成共识时弹采纳确认弹窗
-      if (polish_signal?.ready_to_adopt && phase === 'polish') {
+      if (polish_signal?.ready_to_adopt && request.phase === 'polish') {
         setAdoptPrompt({
-          draft: polish_signal.polished_viewpoint || session.viewpoint.content,
+          draft: polish_signal.polished_viewpoint || nextSession.viewpoint.content,
           reply: polish_signal.reply ?? null,
         })
       }
       return true
     } catch (err) {
+      if (!isDiscussionRequestCurrent(request)) return false
+      const fresh = await reconcileDiscussionSession(request)
+      if (!isDiscussionRequestCurrent(request)) return false
+      if (!fresh) {
+        setActiveToolCalls((current) =>
+          current.filter((toolCall) => toolCall.status !== 'running'),
+        )
+      }
       setError(err.message)
       return false
     } finally {
-      setSending(false)
+      finishDiscussionRequest(request)
     }
   }
 
@@ -308,6 +412,7 @@ export default function ReviewPage() {
   // 弹窗在 enter-polish 与分析生成期间保持打开并 loading，防止重复提交
   async function confirmEnterPolish(draft) {
     if (!session || polishBusy || analysisLoading) return
+    clearDiscussionRuntime()
     setPolishBusy(true)
     setPhaseError(null)
     try {
@@ -370,6 +475,7 @@ export default function ReviewPage() {
   // 撤销/阶段回退统一落地：后端返回完整会话（undo-phase 后分析与打磨消息已清），
   // 提炼信号随之作废（对应消息可能已被撤销）
   async function applyUpdatedSession(updated) {
+    clearDiscussionRuntime()
     setSession(updated)
     setAnalysis(updated.analysis ?? null)
     setAnalysisEn(updated.analysis_en ?? null)
@@ -381,6 +487,7 @@ export default function ReviewPage() {
   // 消息级撤销：删当前阶段最后一条消息
   async function handleUndo() {
     if (!session) return
+    clearDiscussionRuntime()
     setError(null)
     try {
       await applyUpdatedSession(await api.undoReviewSession(session.id))
@@ -392,6 +499,7 @@ export default function ReviewPage() {
   // 阶段级回退（长按触发，DecisionBar 内已 confirm）：polish→distill / distill→重置
   async function handleUndoPhase() {
     if (!session) return
+    clearDiscussionRuntime()
     setError(null)
     try {
       await applyUpdatedSession(await api.undoReviewPhase(session.id))
@@ -405,6 +513,7 @@ export default function ReviewPage() {
   }
 
   async function handleDecision(payload) {
+    clearDiscussionRuntime()
     const result = await api.submitReviewDecision(session.id, payload)
     const template = t('decisionDone').accept
     setNotice(
@@ -424,6 +533,16 @@ export default function ReviewPage() {
     setSearchParams({})
     await loadQueue()
   }
+
+  const visibleToolCalls = useMemo(() => {
+    const merged = [...(session?.tool_calls ?? [])]
+    for (const activeCall of activeToolCalls) {
+      const index = merged.findIndex((call) => call.call_id === activeCall.call_id)
+      if (index === -1) merged.push(activeCall)
+      else merged[index] = { ...merged[index], ...activeCall }
+    }
+    return merged
+  }, [session?.tool_calls, activeToolCalls])
 
   // 展示用分析：英文界面且会话带英文版时替换文本字段；layer/tags 为数据值沿用原对象
   const displayAnalysis =
@@ -508,6 +627,7 @@ export default function ReviewPage() {
                 )}
                 <DiscussionCard
                   session={session}
+                  toolCalls={visibleToolCalls}
                   sending={sending}
                   onSend={handleSend}
                   phase={phase}

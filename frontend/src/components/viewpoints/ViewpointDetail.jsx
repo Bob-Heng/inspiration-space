@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api'
 import ItemTitle from '../ItemTitle'
 import TranslatedText from '../TranslatedText'
+import ToolCallRow from '../review/ToolCallRow'
+import { buildDiscussionTimeline } from '../review/discussionTimeline'
 import { useLang } from '../../i18n'
 import {
   RELATION_LABELS,
@@ -33,10 +35,34 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
         api.listViewpointRelations(viewpointId),
         api.getReviewHistory(viewpointId),
       ])
+      let nextReview = reviewHistory?.exists ? reviewHistory : null
+      let reviewSessionError = null
+      if (nextReview?.session?.id) {
+        try {
+          const fullSession = await api.getReviewSession(nextReview.session.id)
+          nextReview = {
+            ...nextReview,
+            session: fullSession,
+            messages: fullSession.messages ?? nextReview.messages,
+            tool_calls:
+              fullSession.tool_calls ??
+              nextReview.tool_calls ??
+              nextReview.session.tool_calls ??
+              [],
+          }
+        } catch (err) {
+          reviewSessionError = err
+          nextReview = {
+            ...nextReview,
+            tool_calls:
+              nextReview.tool_calls ?? nextReview.session.tool_calls ?? [],
+          }
+        }
+      }
       setViewpoint(detail)
       setRelations(relationList)
-      setReview(reviewHistory?.exists ? reviewHistory : null)
-      setError(null)
+      setReview(nextReview)
+      setError(reviewSessionError?.message ?? null)
       if (detail.source_inspiration_id) {
         try {
           setInspiration(await api.getInspiration(detail.source_inspiration_id))
@@ -132,6 +158,10 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
 
   // 仅 accepted（集思录在库）可编辑关系/标题/撤回；撤回后变 draft 转为只读
   const editable = viewpoint && viewpoint.status === 'accepted'
+  const reviewTimeline = buildDiscussionTimeline(
+    review?.messages ?? [],
+    review?.tool_calls ?? [],
+  )
 
   return (
     <div className="ui-modal-mask fixed inset-0 z-10 overflow-y-auto p-4">
@@ -378,43 +408,49 @@ export default function ViewpointDetail({ viewpointId, onClose, onChanged }) {
                         : ''}
                     </p>
                   )}
-                  {review.messages.length === 0 ? (
+                  {reviewTimeline.length === 0 ? (
                     <p className="text-sm text-ink-3">{t('vpReviewNoMessages')}</p>
                   ) : (
                     <ul className="max-h-72 space-y-2 overflow-y-auto pr-1">
-                      {review.messages.map((msg) => (
-                        <li
-                          key={msg.id}
-                          className={`flex ${
-                            msg.role === 'user' ? 'justify-end' : 'justify-start'
-                          }`}
-                        >
-                          <div
-                            className={`max-w-[85%] rounded-input px-3 py-2 text-sm ${
-                              msg.role === 'user'
-                                ? 'bg-accent text-accent-ink'
-                                : 'bg-paper-2 text-ink'
+                      {reviewTimeline.map((item) =>
+                        item.type === 'tool' ? (
+                          <li key={item.key}>
+                            <ToolCallRow toolCall={item.toolCall} />
+                          </li>
+                        ) : (
+                          <li
+                            key={item.key}
+                            className={`flex ${
+                              item.message.role === 'user' ? 'justify-end' : 'justify-start'
                             }`}
                           >
-                            <p
-                              className={`mb-0.5 text-xs ${
-                                msg.role === 'user'
-                                  ? 'text-accent-ink/70'
-                                  : 'text-ink-3'
+                            <div
+                              className={`max-w-[85%] rounded-input px-3 py-2 text-sm ${
+                                item.message.role === 'user'
+                                  ? 'bg-accent text-accent-ink'
+                                  : 'bg-paper-2 text-ink'
                               }`}
                             >
-                              {msg.role === 'user' ? t('me') : t('ai')}
-                            </p>
-                            <p className="whitespace-pre-wrap">
-                              <TranslatedText
-                                contentZh={msg.content_zh}
-                                contentEn={msg.content_en}
-                                originalLang={msg.original_lang}
-                              />
-                            </p>
-                          </div>
-                        </li>
-                      ))}
+                              <p
+                                className={`mb-0.5 text-xs ${
+                                  item.message.role === 'user'
+                                    ? 'text-accent-ink/70'
+                                    : 'text-ink-3'
+                                }`}
+                              >
+                                {item.message.role === 'user' ? t('me') : t('ai')}
+                              </p>
+                              <p className="whitespace-pre-wrap">
+                                <TranslatedText
+                                  contentZh={item.message.content_zh}
+                                  contentEn={item.message.content_en}
+                                  originalLang={item.message.original_lang}
+                                />
+                              </p>
+                            </div>
+                          </li>
+                        ),
+                      )}
                     </ul>
                   )}
                 </div>

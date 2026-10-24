@@ -19,7 +19,7 @@ export default function RelationsPanel({ analysis, related }) {
           <ul className="mt-3 space-y-2">
             {related.map(({ relation, viewpoint }) => (
               <li
-                key={`${relation.type}-${relation.viewpoint_id}`}
+                key={`${relation.type}-${relation.display_id ?? relation.viewpoint_id}`}
                 className="rounded border border-rule p-3 text-sm"
               >
                 <div className="flex items-center gap-2">
@@ -33,7 +33,7 @@ export default function RelationsPanel({ analysis, related }) {
                     {relationLabel(relation.type, lang)}
                   </span>
                   <span className="font-mono text-xs text-accent">
-                    #{viewpoint?.source_inspiration_id ?? relation.viewpoint_id}
+                    #{viewpoint?.source_inspiration_id ?? relation.display_id ?? relation.viewpoint_id}
                   </span>
                 </div>
                 {viewpoint ? (
