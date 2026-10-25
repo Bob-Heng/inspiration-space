@@ -88,6 +88,16 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+#root,
+#root * {
+  user-select: text;
+}
+
+#root :is(button, input, textarea, select, option, a, [role='button'], [role='link']),
+#root :is(button, a, [role='button'], [role='link']) * {
+  user-select: none;
+}
+
 ::selection {
   background: var(--color-accent-soft);
 }

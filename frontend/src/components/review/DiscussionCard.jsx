@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import TranslatedText from '../TranslatedText'
 import { useLang } from '../../i18n'
+import { handleTextareaEnter } from '../../keyboard'
 import ToolCallRow from './ToolCallRow'
 import { buildDiscussionTimeline } from './discussionTimeline'
 
@@ -124,6 +125,7 @@ export default function DiscussionCard({
           placeholder={active ? t('inputPlaceholder') : t('sessionClosed')}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => handleTextareaEnter(e, handleSubmit)}
           disabled={!active || sending}
         />
         <button

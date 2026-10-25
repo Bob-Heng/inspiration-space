@@ -7,6 +7,7 @@ import PhaseBadge from './PhaseBadge'
 import SortToggle from './SortToggle'
 import TranslatedText from './TranslatedText'
 import { useLang } from '../i18n'
+import { handleTextareaEnter } from '../keyboard'
 import { statusLabel } from '../vocab'
 
 // 每页条数（客户端分页）
@@ -246,6 +247,7 @@ export default function InspirationPanel() {
           placeholder={t('recordPlaceholder')}
           value={content}
           onChange={(e) => setContent(e.target.value)}
+          onKeyDown={(e) => handleTextareaEnter(e, handleCreate)}
         />
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <label className="text-sm text-ink-2">
