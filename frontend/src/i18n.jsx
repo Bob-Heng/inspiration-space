@@ -131,7 +131,6 @@ export const STRINGS = {
     toolQueryRunning: '正在查询',
     toolQueryCompleted: '已完成查询',
     toolQueryFailed: '查询失败',
-    toolCurrentViewpoint: '当前观点',
     toolViewpointN: '观点 #{id}',
     // 提炼 → 打磨
     enterPolish: '进入打磨',
@@ -431,7 +430,6 @@ export const STRINGS = {
     toolQueryRunning: 'Querying',
     toolQueryCompleted: 'Query completed',
     toolQueryFailed: 'Query failed',
-    toolCurrentViewpoint: 'Current viewpoint',
     toolViewpointN: 'Viewpoint #{id}',
     enterPolish: 'Enter polishing',
     polishEntryTitle: 'Already a viewpoint',

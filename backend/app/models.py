@@ -138,7 +138,7 @@ class ReviewDecision(Base):
 class ReviewToolCall(Base):
     """讨论期按需查询留痕。只保存终态；running 由 SSE 实时事件呈现。
 
-    turn_id 普通发言为对应用户消息 id，首问为 0；target 为 current 或展示编号。
+    turn_id 普通发言为对应用户消息 id，首问为 0；target 为展示编号。
     """
 
     __tablename__ = "review_tool_calls"

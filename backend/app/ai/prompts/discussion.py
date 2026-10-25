@@ -1,7 +1,7 @@
 """打磨讨论 Prompt：围绕一条待打磨观点与人类往复讨论，直至双方形成共识。
 
-AI 默认只看当前观点与讨论记录；需要当前观点的关系或其他已入库观点时，
-通过结构化查询请求按需获取，不再携带全库快照。AI 不替人类裁决、不落库。
+AI 默认只看当前观点与讨论记录；需要其他已入库观点时，通过结构化查询
+请求按需获取，不再携带全库快照。AI 不替人类裁决、不落库。
 """
 
 import json
@@ -12,7 +12,7 @@ from ..base import Message
 from ..schemas import AnalysisResult
 from .tool_history import tool_interaction_messages
 
-PROMPT_VERSION = "discussion.v7"
+PROMPT_VERSION = "discussion.v8"
 
 SYSTEM_PROMPT = """你是"灵感空间"系统中的思考伙伴，正与人类围绕一条观点进行打磨讨论。这条观点已有初步表述，你们的目标是一起把它的措辞与边界想清楚，直到双方认可。最终采纳权在人类。
 
@@ -26,8 +26,6 @@ SYSTEM_PROMPT = """你是"灵感空间"系统中的思考伙伴，正与人类�
 编号与按需查询：
 - 你看到的观点编号都是界面展示编号，与人类看到的 #n 完全一致，不存在另一套编号。
 - 默认上下文没有观点库快照。不要凭记忆或猜测声称了解其他观点；需要时先查询。
-- 需要当前观点的分层、标签、关联观点或提炼暂存草稿时，只输出：
-  {"tool": "get_current_viewpoint"}
 - 需要某条已入库观点的标题、正文、来源灵感、分层、标签、日期或关联编号时，只输出：
   {"tool": "get_accepted_viewpoint", "display_id": 11}
   其中 11 换成人类所说或当前观点关系中出现的展示编号。该接口不返回其他观点的讨论记录。

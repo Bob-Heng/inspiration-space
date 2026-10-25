@@ -1,4 +1,4 @@
-"""讨论期按需查询：只暴露当前观点与指定展示编号的已入库观点，不提供讨论全文。
+"""讨论期按需查询：只暴露指定展示编号的已入库观点，不提供其讨论全文。
 
 全站统一展示编号 = 来源灵感 id，无来源时兜底观点 id。AI 分析与工具调用
 均以此编号面向用户；内部关系仍使用 viewpoints.id。
@@ -19,7 +19,6 @@ from ..models import (
 )
 from .tags import LAYER_LABELS
 
-CURRENT_TOOL = "get_current_viewpoint"
 ACCEPTED_TOOL = "get_accepted_viewpoint"
 
 
@@ -102,21 +101,6 @@ def _tags(viewpoint: Viewpoint) -> dict:
     }
 
 
-def query_current_viewpoint(db: Session, session: ReviewSession) -> dict:
-    viewpoint = db.get(Viewpoint, session.viewpoint_id)
-    return {
-        "number": display_id(viewpoint),
-        "title_zh": viewpoint.title_zh,
-        "title_en": viewpoint.title_en,
-        "content": viewpoint.content,
-        "status": viewpoint.status,
-        "layer": LAYER_LABELS.get(viewpoint.layer) if viewpoint.layer else None,
-        "tags": _tags(viewpoint),
-        "related_viewpoints": _related(db, viewpoint),
-        "distilled_snapshot": session.distilled_snapshot,
-    }
-
-
 def _accepted_at(db: Session, viewpoint: Viewpoint):
     decision = db.scalars(
         select(ReviewDecision)
@@ -166,11 +150,7 @@ def query_accepted_viewpoint(db: Session, number: int) -> dict:
     }
 
 
-def execute_review_tool(
-    db: Session, session: ReviewSession, tool: str, target: int | str
-) -> dict:
-    if tool == CURRENT_TOOL:
-        return query_current_viewpoint(db, session)
+def execute_review_tool(db: Session, tool: str, target: int | str) -> dict:
     if tool == ACCEPTED_TOOL:
         return query_accepted_viewpoint(db, int(target))
     return {"error": "unknown_tool", "message": f"未知查询工具：{tool}"}

@@ -143,7 +143,7 @@ async def _run_discussion_with_tools(
         result = await _run_discussion_call(db, provider, messages, session.phase)
         if result.tool is None:
             return result
-        target = "current" if result.tool != ACCEPTED_TOOL else str(result.display_id)
+        target = str(result.display_id)
         call_id = uuid.uuid4().hex
         if emit:
             emit(
@@ -158,7 +158,7 @@ async def _run_discussion_with_tools(
             )
         status_value = "completed"
         try:
-            query_result = execute_review_tool(db, session, result.tool, target)
+            query_result = execute_review_tool(db, result.tool, target)
         except Exception as exc:
             logger.exception("讨论查询工具执行失败：%s", result.tool)
             status_value = "failed"

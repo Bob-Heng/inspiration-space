@@ -135,7 +135,7 @@ class ReviewToolCallOut(BaseModel):
     turn_id: int
     phase: str
     tool: str
-    target: int | Literal["current"]
+    target: int
     status: str
     created_at: datetime
 

@@ -56,7 +56,6 @@ class QueryProvider(LLMProvider):
 
     def __init__(self):
         self.outputs = [
-            {"tool": "get_current_viewpoint"},
             {"tool": "get_accepted_viewpoint", "display_id": 33},
             {"reply": "已核实 #33 的正文与来源。", "ready_to_adopt": False},
         ]
@@ -124,21 +123,20 @@ def test_连续查询_默认无全库_结果回喂与撤销(db_session):
     pair = _send(db_session, session, provider, lambda event, data: events.append((event, data)))
 
     assert pair.assistant_message.content == "已核实 #33 的正文与来源。"
-    assert len(provider.calls) == 3
+    assert len(provider.calls) == 2
     first_context = json.dumps(provider.calls[0], ensure_ascii=False)
     assert "其他观点正文秘密" not in first_context
     assert "#42" in first_context
+    assert "当前观点正文" in first_context
     second_context = provider.calls[1][-1]["content"]
     assert '"number": 33' in second_context
-    assert "提炼完成的工作稿" in second_context
-    third_context = json.dumps(provider.calls[2], ensure_ascii=False)
-    assert "其他观点正文秘密" in third_context
-    assert "#33 的来源灵感" in third_context
+    assert "其他观点正文秘密" in second_context
+    assert "#33 的来源灵感" in second_context
 
     calls = list(db_session.scalars(select(ReviewToolCall).order_by(ReviewToolCall.id)))
-    assert [c.target for c in calls] == ["current", "33"]
-    assert [c.status for c in calls] == ["completed", "completed"]
-    assert [e[1]["status"] for e in events] == ["running", "completed", "running", "completed"]
+    assert [c.target for c in calls] == ["33"]
+    assert [c.status for c in calls] == ["completed"]
+    assert [e[1]["status"] for e in events] == ["running", "completed"]
 
     user_message_id = pair.user_message.id
     assert all(c.turn_id == user_message_id for c in calls)
@@ -194,13 +192,12 @@ def test_SSE包含工具进度与最终会话快照(db_session):
         return "".join(chunks)
 
     body = asyncio.run(collect())
-    assert body.count("event: tool") == 4
+    assert body.count("event: tool") == 2
     assert '"status": "running"' in body
-    assert '"target": "current"' in body
     assert '"target": "33"' in body
     assert "event: done" in body
     done = json.loads(body.split("event: done\ndata: ", 1)[1].split("\n\n", 1)[0])
-    assert len(done["session"]["tool_calls"]) == 2
+    assert len(done["session"]["tool_calls"]) == 1
     assert done["pair"]["assistant_message"]["content"] == "已核实 #33 的正文与来源。"
 
 
@@ -243,8 +240,8 @@ def test_首问撤销同时删除turn0工具记录(db_session):
             session_id=session.id,
             turn_id=0,
             phase="polish",
-            tool="get_current_viewpoint",
-            target="current",
+            tool="get_accepted_viewpoint",
+            target="33",
             status="completed",
             result_json="{}",
         )

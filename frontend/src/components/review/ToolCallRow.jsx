@@ -43,10 +43,7 @@ export default function ToolCallRow({ toolCall }) {
     completed: t('toolQueryCompleted'),
     failed: t('toolQueryFailed'),
   }[status]
-  const targetText =
-    toolCall.target === 'current'
-      ? t('toolCurrentViewpoint')
-      : tf('toolViewpointN', { id: toolCall.target })
+  const targetText = tf('toolViewpointN', { id: toolCall.target })
 
   return (
     <div

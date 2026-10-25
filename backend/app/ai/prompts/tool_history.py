@@ -4,9 +4,7 @@ import json
 
 
 def tool_interaction_messages(call) -> list[dict]:
-    request = {"tool": call.tool}
-    if call.tool == "get_accepted_viewpoint":
-        request["display_id"] = int(call.target)
+    request = {"tool": call.tool, "display_id": int(call.target)}
     try:
         result = json.loads(call.result_json) if call.result_json else {}
     except json.JSONDecodeError:

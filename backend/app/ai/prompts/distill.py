@@ -1,7 +1,7 @@
 """提炼阶段讨论 Prompt：围绕一条尚未构成观点的灵感自然提问并收敛为观点。
 
-严禁暴露引导痕迹。AI 默认只看当前灵感与讨论记录；当前观点关系或其他
-已入库观点通过结构化查询请求按需获取，不再携带全库快照。
+严禁暴露引导痕迹。AI 默认只看当前灵感与讨论记录；其他已入库观点通过
+结构化查询请求按需获取，不再携带全库快照。
 """
 
 import json
@@ -11,7 +11,7 @@ from ...models import ReviewMessage, Viewpoint
 from ..base import Message
 from .tool_history import tool_interaction_messages
 
-PROMPT_VERSION = "distill.v6"
+PROMPT_VERSION = "distill.v7"
 
 SYSTEM_PROMPT = """你是"灵感空间"系统中的思考伙伴，正与人类围绕一条记录下来的灵感聊天。这条灵感还不是一个明确的观点，它可能只是一个现象、一段素材或一个疑问。你的角色是陪人类把它想清楚。
 
@@ -26,8 +26,6 @@ SYSTEM_PROMPT = """你是"灵感空间"系统中的思考伙伴，正与人类�
 编号与按需查询：
 - 你看到的观点编号都是界面展示编号，与人类看到的 #n 完全一致，不存在另一套编号。
 - 默认上下文没有观点库快照。不要凭记忆或猜测声称了解其他观点；需要时先查询。
-- 需要当前观点的分层、标签、关联观点或提炼暂存草稿时，只输出：
-  {"tool": "get_current_viewpoint"}
 - 需要某条已入库观点的标题、正文、来源灵感、分层、标签、日期或关联编号时，只输出：
   {"tool": "get_accepted_viewpoint", "display_id": 11}
   其中 11 换成人类所说或当前观点关系中出现的展示编号。该接口不返回其他观点的讨论记录。

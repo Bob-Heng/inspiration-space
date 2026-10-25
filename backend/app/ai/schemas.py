@@ -33,7 +33,7 @@ class AnalysisRelation(BaseModel):
 class DiscussionTurn(BaseModel):
     """讨论的一轮输出：要么请求查询，要么给出正式回复，二者互斥。"""
 
-    tool: Literal["get_current_viewpoint", "get_accepted_viewpoint"] | None = None
+    tool: Literal["get_accepted_viewpoint"] | None = None
     display_id: int | None = None
     reply: NonEmptyStr | None = None
     ready_to_polish: bool = False
@@ -48,10 +48,8 @@ class DiscussionTurn(BaseModel):
         if self.tool is not None:
             if self.reply is not None:
                 raise ValueError("查询请求不得同时包含 reply")
-            if self.tool == "get_accepted_viewpoint" and self.display_id is None:
+            if self.display_id is None:
                 raise ValueError("查询已入库观点必须包含 display_id")
-            if self.tool == "get_current_viewpoint":
-                self.display_id = None
         return self
 
 
